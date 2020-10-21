@@ -1,0 +1,43 @@
+Source: rpma
+Priority: optional
+Maintainer: Adam Borowski <kilobyte@angband.pl>
+Build-Depends: debhelper-compat (= 13),
+	cmake,
+	libibverbs-dev,
+	librdmacm-dev,
+	libcmocka-dev,
+	groff,
+	txt2man,
+	pkg-config,
+	libprotobuf-c-dev,
+	pandoc,
+	libunwind-dev,
+Standards-Version: 4.5.0
+Section: libs
+Homepage: https://github.com/pmem/rpma
+Vcs-Browser: https://github.com/kilobyte/rpma
+Vcs-Git: https://github.com/kilobyte/rpma
+Rules-Requires-Root: no
+
+Package: librpma-dev
+Section: libdevel
+Architecture: amd64 arm64 ppc64el
+Multi-Arch: same
+Depends: librpma0 (= ${binary:Version}), ${misc:Depends}
+Description: remote pmem access library (headers)
+ The Remote Persistent Memory Access (RPMA) is a C library to simplify
+ accessing persistent memory devices on remote hosts over Remote Direct
+ Memory Access (RDMA).
+ .
+ This package includes development headers and documentation.
+
+Package: librpma0
+Architecture: amd64 arm64 ppc64el
+Multi-Arch: same
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: remote pmem access library (runtime)
+ The Remote Persistent Memory Access (RPMA) is a C library to simplify
+ accessing persistent memory devices on remote hosts over Remote Direct
+ Memory Access (RDMA).
+ .
+ This package includes the runtime library.
