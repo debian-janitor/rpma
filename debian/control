@@ -12,6 +12,10 @@ Build-Depends: debhelper-compat (= 13),
 	libprotobuf-c-dev,
 	pandoc,
 	libunwind-dev,
+	libpmem-dev,
+	libpmem2-dev,
+	valgrind,
+	pylint,
 Standards-Version: 4.5.0
 Section: libs
 Homepage: https://github.com/pmem/rpma
