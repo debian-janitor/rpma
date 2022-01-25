@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BSD-3-Clause
-/* Copyright 2020, Intel Corporation */
+/* Copyright 2020-2021, Intel Corporation */
 
 /*
  * mr-reg.c -- the memory region registration/deregistration unit tests
@@ -24,33 +24,8 @@ static struct prestate prestates[] = {
 	/* values used in reg_dereg__success called with (prestates + 0) */
 	{RPMA_MR_USAGE_READ_SRC, IBV_ACCESS_REMOTE_READ, NULL},
 	/* values used in reg_dereg__success called with (prestates + 1) */
-	{RPMA_MR_USAGE_READ_DST, IBV_ACCESS_LOCAL_WRITE, NULL},
-	/* values used in reg_dereg__success called with (prestates + 2) */
 	{(RPMA_MR_USAGE_READ_SRC | RPMA_MR_USAGE_READ_DST),
 		(IBV_ACCESS_REMOTE_READ | IBV_ACCESS_LOCAL_WRITE), NULL},
-	/* values used in reg_dereg__success called with (prestates + 3) */
-	{RPMA_MR_USAGE_WRITE_SRC, IBV_ACCESS_LOCAL_WRITE, NULL},
-	/* values used in reg_dereg__success called with (prestates + 4) */
-	{RPMA_MR_USAGE_WRITE_DST,
-		(IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_LOCAL_WRITE), NULL},
-	/* values used in reg_dereg__success called with (prestates + 5) */
-	{RPMA_MR_USAGE_FLUSH_TYPE_PERSISTENT, IBV_ACCESS_REMOTE_READ, NULL},
-	/* values used in reg_dereg__success called with (prestates + 6) */
-	{(RPMA_MR_USAGE_WRITE_SRC | RPMA_MR_USAGE_WRITE_DST |
-	RPMA_MR_USAGE_FLUSH_TYPE_PERSISTENT),
-		(IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_LOCAL_WRITE |
-		IBV_ACCESS_REMOTE_READ), NULL},
-	/* values used in reg_dereg__success called with (prestates + 7) */
-	{RPMA_MR_USAGE_RECV, IBV_ACCESS_LOCAL_WRITE, NULL},
-	/* values used in reg_dereg__success called with (prestates + 8) */
-	{RPMA_MR_USAGE_SEND, 0, NULL},
-	/* values used in reg_dereg__success called with (prestates + 9) */
-	{(RPMA_MR_USAGE_READ_SRC | RPMA_MR_USAGE_READ_DST |
-	RPMA_MR_USAGE_WRITE_SRC | RPMA_MR_USAGE_WRITE_DST |
-	RPMA_MR_USAGE_RECV | RPMA_MR_USAGE_SEND |
-	RPMA_MR_USAGE_FLUSH_TYPE_PERSISTENT),
-		(IBV_ACCESS_REMOTE_READ | IBV_ACCESS_REMOTE_WRITE |
-		IBV_ACCESS_LOCAL_WRITE), NULL},
 };
 
 /*
@@ -155,17 +130,17 @@ reg__wrong_usage(void **unused)
 }
 
 /*
- * reg__failed_E_NOMEM -- rpma_mr_reg fails with ENOMEM
+ * reg__malloc_ERRNO -- malloc() fails with MOCK_ERRNO
  */
 static void
-reg__failed_E_NOMEM(void **unused)
+reg__malloc_ERRNO(void **unused)
 {
 	/* configure mocks */
 	struct rpma_peer_mr_reg_args mr_reg_args;
 	mr_reg_args.usage = RPMA_MR_USAGE_READ_SRC;
 	mr_reg_args.access = IBV_ACCESS_REMOTE_READ;
 	mr_reg_args.mr = MOCK_MR;
-	will_return(__wrap__test_malloc, ENOMEM);
+	will_return(__wrap__test_malloc, MOCK_ERRNO);
 	will_return_maybe(rpma_peer_mr_reg, &mr_reg_args);
 	will_return_maybe(ibv_dereg_mr, MOCK_OK);
 
@@ -180,10 +155,10 @@ reg__failed_E_NOMEM(void **unused)
 }
 
 /*
- * reg__peer_mr_reg_failed_E_PROVIDER -- rpma_peer_mr_reg fails with ENOMEM
+ * reg__peer_mr_reg_ERRNO -- rpma_peer_mr_reg() fails with MOCK_ERRNO
  */
 static void
-reg__peer_mr_reg_failed_E_PROVIDER(void **unused)
+reg__peer_mr_reg_ERRNO(void **unused)
 {
 	/* configure mocks */
 	struct rpma_peer_mr_reg_args mr_reg_args;
@@ -191,7 +166,7 @@ reg__peer_mr_reg_failed_E_PROVIDER(void **unused)
 	mr_reg_args.access = IBV_ACCESS_LOCAL_WRITE;
 	mr_reg_args.mr = NULL;
 	mr_reg_args.verrno = MOCK_ERRNO;
-	will_return_maybe(rpma_peer_mr_reg, &mr_reg_args);
+	will_return(rpma_peer_mr_reg, &mr_reg_args);
 	will_return_maybe(__wrap__test_malloc, MOCK_OK);
 
 	/* run test */
@@ -246,10 +221,10 @@ dereg__NULL_mr(void **unused)
 }
 
 /*
- * dereg__failed_E_PROVIDER -- rpma_mr_dereg failed with RPMA_E_PROVIDER
+ * dereg__dereg_mr_ERRNO -- ibv_dereg_mr() fails with MOCK_ERRNO
  */
 static void
-dereg__failed_E_PROVIDER(void **pprestate)
+dereg__dereg_mr_ERRNO(void **pprestate)
 {
 	/*
 	 * Create a local memory registration object.
@@ -264,7 +239,7 @@ dereg__failed_E_PROVIDER(void **pprestate)
 	struct rpma_mr_local *mr = prestate->mr;
 
 	/* configure mocks */
-	will_return_maybe(ibv_dereg_mr, MOCK_ERRNO);
+	will_return(ibv_dereg_mr, MOCK_ERRNO);
 
 	/* run test */
 	ret = rpma_mr_dereg(&mr);
@@ -283,34 +258,16 @@ static const struct CMUnitTest tests_reg[] = {
 	cmocka_unit_test(reg__0_size),
 	cmocka_unit_test(reg__0_usage),
 	cmocka_unit_test(reg__wrong_usage),
-	cmocka_unit_test(reg__failed_E_NOMEM),
-	cmocka_unit_test(reg__peer_mr_reg_failed_E_PROVIDER),
-	{ "reg_dereg__USAGE_READ_SRC", reg_dereg__success,
-		setup__reg_success, teardown__dereg_success, prestates + 0},
-	{ "reg_dereg__USAGE_READ_DST", reg_dereg__success,
-		setup__reg_success, teardown__dereg_success, prestates + 1},
-	{ "reg_dereg__USAGE_READ_SRC_DST", reg_dereg__success,
-		setup__reg_success, teardown__dereg_success, prestates + 2},
-	{ "reg_dereg__USAGE_WRITE_SRC", reg_dereg__success,
-		setup__reg_success, teardown__dereg_success, prestates + 3},
-	{ "reg_dereg__USAGE_WRITE_DST", reg_dereg__success,
-		setup__reg_success, teardown__dereg_success, prestates + 4},
-	{ "reg_dereg__USAGE_FLUSHABLE", reg_dereg__success,
-		setup__reg_success, teardown__dereg_success, prestates + 5},
-	{ "reg_dereg__USAGE_WRITE_SRC_DST_FLUSHABLE", reg_dereg__success,
-		setup__reg_success, teardown__dereg_success, prestates + 6},
-	{ "reg_dereg__USAGE_RECV", reg_dereg__success,
-		setup__reg_success, teardown__dereg_success, prestates + 7},
-	{ "reg_dereg__USAGE_SEND", reg_dereg__success,
-		setup__reg_success, teardown__dereg_success, prestates + 8},
-	{ "reg_dereg__USAGE_ALL", reg_dereg__success,
-		setup__reg_success, teardown__dereg_success, prestates + 9},
+	cmocka_unit_test(reg__malloc_ERRNO),
+	cmocka_unit_test(reg__peer_mr_reg_ERRNO),
+	cmocka_unit_test_prestate_setup_teardown(reg_dereg__success,
+		setup__reg_success, teardown__dereg_success, prestates),
 
 	/* rpma_mr_dereg() unit tests */
 	cmocka_unit_test(dereg__NULL_mr_ptr),
 	cmocka_unit_test(dereg__NULL_mr),
-	cmocka_unit_test_prestate(dereg__failed_E_PROVIDER,
-		prestates + 2),
+	cmocka_unit_test_prestate(dereg__dereg_mr_ERRNO,
+		prestates + 1),
 	cmocka_unit_test(NULL)
 };
 

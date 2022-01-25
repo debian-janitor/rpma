@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: BSD-3-Clause */
-/* Copyright 2020, Intel Corporation */
+/* Copyright 2020-2021, Intel Corporation */
+/* Copyright 2021, Fujitsu */
 
 /*
  * mocks-ibverbs.h -- the ibverbs mocks' header
@@ -13,7 +14,11 @@
 /* mocked IBV entities */
 extern struct verbs_context Verbs_context;
 extern struct ibv_comp_channel Ibv_comp_channel;
+extern struct ibv_context Ibv_context;
+extern struct ibv_device Ibv_device;
+extern struct ibv_pd Ibv_pd;
 extern struct ibv_cq Ibv_cq;
+extern struct ibv_cq Ibv_rcq;
 extern struct ibv_qp Ibv_qp;
 extern struct ibv_mr Ibv_mr;
 
@@ -21,7 +26,8 @@ extern struct ibv_mr Ibv_mr;
 #define MOCK_VERBS		(&Verbs_context.context)
 #define MOCK_COMP_CHANNEL	(struct ibv_comp_channel *)&Ibv_comp_channel
 #define MOCK_IBV_CQ		(struct ibv_cq *)&Ibv_cq
-#define MOCK_IBV_PD		(struct ibv_pd *)0x00D0
+#define MOCK_IBV_RCQ		(struct ibv_cq *)&Ibv_rcq
+#define MOCK_IBV_PD		(struct ibv_pd *)&Ibv_pd
 #define MOCK_QP			(struct ibv_qp *)&Ibv_qp
 #define MOCK_MR			(struct ibv_mr *)&Ibv_mr
 
@@ -40,6 +46,9 @@ struct ibv_post_send_mock_args {
 	enum ibv_wr_opcode opcode;
 	unsigned send_flags;
 	uint64_t wr_id;
+	uint64_t remote_addr;
+	uint32_t rkey;
+	uint32_t imm_data;
 	int ret;
 };
 
@@ -63,5 +72,10 @@ int ibv_post_recv_mock(struct ibv_qp *qp, struct ibv_recv_wr *wr,
 			struct ibv_recv_wr **bad_wr);
 
 int ibv_req_notify_cq_mock(struct ibv_cq *cq, int solicited_only);
+
+#ifdef IBV_ADVISE_MR_SUPPORTED
+int ibv_advise_mr_mock(struct ibv_pd *pd, enum ibv_advise_mr_advice advice,
+		uint32_t flags, struct ibv_sge *sg_list, uint32_t num_sge);
+#endif
 
 #endif /* MOCKS_IBVERBS_H */

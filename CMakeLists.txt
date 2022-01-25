@@ -1,19 +1,14 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
-# Copyright 2020, Intel Corporation
+# Copyright 2020-2022, Intel Corporation
 #
 
 cmake_minimum_required(VERSION 3.3)
 
 project(rpma C)
 
-# disable in-source builds
-if(${PROJECT_SOURCE_DIR} STREQUAL ${PROJECT_BINARY_DIR})
-	message(FATAL_ERROR "In-source build is not allowed.")
-endif()
-
 set(VERSION_MAJOR 0)
-set(VERSION_MINOR 9)
+set(VERSION_MINOR 10)
 set(VERSION_PATCH 0)
 # set(VERSION_PRERELEASE rc1)
 
@@ -29,6 +24,7 @@ set(LIBRPMA_SOURCE_DIR ${CMAKE_SOURCE_DIR}/src/)
 
 # required only for some examples
 set(LIBPMEM_REQUIRED_VERSION 1.6)
+set(LIBPMEM2_REQUIRED_VERSION 1.10)
 
 set(CMAKE_DISABLE_IN_SOURCE_BUILD ON)
 set(THREADS_PREFER_PTHREAD_FLAG ON)
@@ -51,10 +47,14 @@ option(TRACE_TESTS "more verbose test outputs" OFF)
 option(USE_ASAN "enable AddressSanitizer (debugging)" OFF)
 option(USE_UBSAN "enable UndefinedBehaviorSanitizer (debugging)" OFF)
 
+option(TESTS_SOFT_ROCE "enable tests that require a SoftRoCE-configured network interface" ON)
+option(TESTS_NO_FORTIFY_SOURCE "enable tests that do not pass when -D_FORTIFY_SOURCE=2 flag set" OFF)
 option(TESTS_USE_FORCED_PMEM "run tests with PMEM_IS_PMEM_FORCE=1" OFF)
 option(TESTS_USE_VALGRIND "enable tests with valgrind (if found)" OFF)
+option(TESTS_USE_VALGRIND_PMEMCHECK "enable tests with valgrind pmemcheck (if found)" OFF)
 option(TESTS_LONG "enable long running tests" OFF)
 option(TESTS_USE_FAULT_INJECTION "run tests with fault injection" OFF)
+option(TEST_PYTHON_TOOLS "run tests for Python tools" ON)
 
 # Do not treat include directories from the interfaces
 # of consumed Imported Targets as SYSTEM by default.
@@ -104,8 +104,23 @@ if(NOT LIBRDMACM_FOUND)
 	find_package(LIBRDMACM REQUIRED librdmacm)
 endif()
 
-pkg_check_modules(LIBPMEM QUIET libpmem>=${LIBPMEM_REQUIRED_VERSION})
-pkg_check_modules(LIBPROTOBUFC QUIET libprotobuf-c)
+pkg_check_modules(LIBPMEM libpmem>=${LIBPMEM_REQUIRED_VERSION})
+if(NOT LIBPMEM_FOUND)
+	find_package(LIBPMEM ${LIBPMEM_REQUIRED_VERSION})
+	if(NOT LIBPMEM_FOUND)
+		message(WARNING "Since libpmem is missing, the libpmem-based examples will be unable to use PMem. They will be using DRAM instead.")
+	endif()
+endif()
+
+pkg_check_modules(LIBPMEM2 libpmem2>=${LIBPMEM2_REQUIRED_VERSION})
+if(NOT LIBPMEM2_FOUND)
+	find_package(LIBPMEM2 ${LIBPMEM2_REQUIRED_VERSION})
+	if(NOT LIBPMEM2_FOUND)
+		message(WARNING "Since libpmem2 is missing, the libpmem2-based examples will be unable to use PMem. They will be using DRAM instead.")
+	endif()
+endif()
+
+pkg_check_modules(LIBPROTOBUFC libprotobuf-c)
 
 # check if libibverbs has ODP support
 is_ODP_supported(ON_DEMAND_PAGING_SUPPORTED)
@@ -114,6 +129,15 @@ if(ON_DEMAND_PAGING_SUPPORTED)
 	add_flag(-DON_DEMAND_PAGING_SUPPORTED=1)
 else()
 	message(WARNING "On-Demand Paging (ODP) is NOT supported and will be disabled (too old version of libibverbs)!")
+endif()
+
+# check if libibverbs has ibv_advise_mr() support
+is_ibv_advise_mr_supported(IBV_ADVISE_MR_SUPPORTED)
+if(IBV_ADVISE_MR_SUPPORTED)
+	message(STATUS "ibv_advise_mr() supported in libibverbs - Success")
+	add_flag(-DIBV_ADVISE_MR_SUPPORTED=1)
+else()
+	message(WARNING "ibv_advise_mr() is NOT supported and will be disabled (too old version of libibverbs)!")
 endif()
 
 # check if librdmacm has correct signature of rdma_getaddrinfo()
@@ -144,8 +168,6 @@ add_custom_target(check-whitespace-main
 
 add_dependencies(check-whitespace check-whitespace-main)
 
-add_custom_target(tests)
-
 add_flag(-Wpointer-arith)
 add_flag(-Wunused-macros)
 add_flag(-Wsign-conversion)
@@ -171,6 +193,8 @@ if(COVERAGE)
 endif()
 
 if(DEVELOPER_MODE)
+	set(TESTS_NO_FORTIFY_SOURCE ON)
+
 	add_flag(-Wall)
 	add_flag(-Werror)
 
@@ -211,7 +235,7 @@ write_basic_package_version_file(librpma-config-version.cmake
 install(FILES ${CMAKE_CURRENT_BINARY_DIR}/librpma-config.cmake ${CMAKE_CURRENT_BINARY_DIR}/librpma-config-version.cmake
 	DESTINATION ${CMAKE_INSTALL_LIBDIR}/librpma/cmake)
 
-pkg_check_modules(VALGRIND QUIET valgrind)
+pkg_check_modules(VALGRIND valgrind)
 
 if(VALGRIND_FOUND)
 	add_flag(-DVG_MEMCHECK_ENABLED=1)
@@ -219,7 +243,10 @@ if(VALGRIND_FOUND)
 	add_flag(-DVG_HELGRIND_ENABLED=1)
 
 	include_directories(${VALGRIND_INCLUDE_DIRS})
-	find_pmemcheck()
+
+	if(TESTS_USE_VALGRIND_PMEMCHECK)
+		find_pmemcheck()
+	endif()
 
 	if(VALGRIND_PMEMCHECK_FOUND)
 		add_flag(-DVG_PMEMCHECK_ENABLED=1)
@@ -246,12 +273,20 @@ if(BUILD_EXAMPLES)
 	add_subdirectory(examples)
 endif()
 
+if(TEST_PYTHON_TOOLS)
+	find_package(PYLINT REQUIRED pylint)
+	add_subdirectory(tools/perf)
+endif()
+
 if(NOT "${CPACK_GENERATOR}" STREQUAL "")
 	include(${CMAKE_SOURCE_DIR}/cmake/packages.cmake)
 endif()
 
 add_custom_target(config_softroce
-	COMMAND ${CMAKE_SOURCE_DIR}/examples/config_softroce.sh)
+	COMMAND ${CMAKE_SOURCE_DIR}/tools/config_softroce.sh)
 
-add_custom_target(test_softroce
+add_custom_target(run_all_examples
 	COMMAND ${CMAKE_SOURCE_DIR}/examples/run-all-on-SoftRoCE.sh ${CMAKE_BINARY_DIR}/examples)
+
+add_custom_target(run_all_examples_under_valgrind
+	COMMAND ${CMAKE_SOURCE_DIR}/examples/run-all-on-SoftRoCE.sh ${CMAKE_BINARY_DIR}/examples --valgrind)

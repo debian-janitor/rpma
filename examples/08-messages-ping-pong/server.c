@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
-/* Copyright 2020, Intel Corporation */
+/* Copyright 2020-2021, Intel Corporation */
+/* Copyright 2021, Fujitsu */
 
 /*
  * server.c -- a server of the messages-ping-pong example
@@ -98,9 +99,15 @@ main(int argc, char *argv[])
 		goto err_conn_disconnect;
 	if (conn_event != RPMA_CONN_ESTABLISHED) {
 		fprintf(stderr,
-				"rpma_conn_next_event returned an unexptected event\n");
+			"rpma_conn_next_event returned an unexpected event: %s\n",
+			rpma_utils_conn_event_2str(conn_event));
 		goto err_conn_disconnect;
 	}
+
+	/* get the connection's main CQ */
+	struct rpma_cq *cq = NULL;
+	if ((ret = rpma_conn_get_cq(conn, &cq)))
+		goto err_conn_disconnect;
 
 	/* RPMA_OP_SEND completion in the first round is not present */
 	int send_cmpl = 1;
@@ -109,18 +116,25 @@ main(int argc, char *argv[])
 	while (1) {
 		do {
 			/* prepare completions, get one and validate it */
-			if ((ret = rpma_conn_completion_wait(conn))) {
+			ret = rpma_cq_get_completion(cq, &cmpl);
+			if (ret && ret != RPMA_E_NO_COMPLETION)
 				break;
-			} else if ((ret = rpma_conn_completion_get(conn,
-					&cmpl))) {
-				break;
-			} else if (cmpl.op_status != IBV_WC_SUCCESS) {
 
+			if (ret == RPMA_E_NO_COMPLETION) {
+				if ((ret = rpma_cq_wait(cq))) {
+					break;
+				} else if ((ret = rpma_cq_get_completion(cq,
+						&cmpl))) {
+					if (ret == RPMA_E_NO_COMPLETION)
+						continue;
+					break;
+				}
+			}
+
+			if (cmpl.op_status != IBV_WC_SUCCESS) {
 				(void) fprintf(stderr,
-					"operation %d failed: %s\n",
-					cmpl.op,
+					"rpma_send()/rpma_recv() failed: %s\n",
 					ibv_wc_status_str(cmpl.op_status));
-
 				ret = -1;
 				break;
 			}
@@ -134,7 +148,7 @@ main(int argc, char *argv[])
 						"received completion is not as expected (%p != %p [cmpl.op_context] || %"
 						PRIu32
 						" != %ld [cmpl.byte_len] )\n",
-						cmpl.op_context, recv,
+						cmpl.op_context, (void *)recv,
 						cmpl.byte_len, MSG_SIZE);
 					ret = -1;
 					break;

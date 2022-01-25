@@ -39,7 +39,7 @@ const struct rdma_event_channel Evch_zero = {.fd = MOCK_FD};
 int Mock_ctrl_defer_destruction = MOCK_CTRL_NO_DEFER;
 
 /*
- * rpma_info_bind() function requires succesfull creation of two types of
+ * rpma_info_bind() function requires successful creation of two types of
  * objects so both of them have to be created before queuing any expect_*
  * against rpma_info_bind().
  */
@@ -159,7 +159,7 @@ int
 rpma_info_new(const char *addr, const char *port, enum rpma_info_side side,
 		struct rpma_info **info_ptr)
 {
-	assert_string_equal(addr, MOCK_ADDR);
+	assert_string_equal(addr, MOCK_IP_ADDRESS);
 	assert_string_equal(port, MOCK_PORT);
 	assert_int_equal(side, RPMA_INFO_PASSIVE);
 	assert_non_null(info_ptr);
@@ -229,22 +229,6 @@ rdma_listen(struct rdma_cm_id *id, int backlog)
 		return -1;
 
 	return 0;
-}
-
-void *__real__test_malloc(size_t size);
-
-/*
- * __wrap__test_malloc -- malloc() mock
- */
-void *
-__wrap__test_malloc(size_t size)
-{
-	errno = mock_type(int);
-
-	if (errno)
-		return NULL;
-
-	return __real__test_malloc(size);
 }
 
 /*
@@ -340,7 +324,7 @@ setup__ep_listen(void **estate_ptr)
 	expect_value(rpma_info_delete, *info_ptr, MOCK_INFO);
 
 	/* prepare an object */
-	int ret = rpma_ep_listen(MOCK_PEER, MOCK_ADDR, MOCK_PORT,
+	int ret = rpma_ep_listen(MOCK_PEER, MOCK_IP_ADDRESS, MOCK_PORT,
 		&estate->ep);
 
 	/* verify the results */

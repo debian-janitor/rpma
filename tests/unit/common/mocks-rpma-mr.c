@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BSD-3-Clause
-/* Copyright 2020, Intel Corporation */
+/* Copyright 2020-2021, Intel Corporation */
 
 /*
  * mocks-rpma-mr.c -- librpma mr.c module mocks
@@ -22,9 +22,10 @@ rpma_mr_read(struct ibv_qp *qp,
 	size_t len, int flags, const void *op_context)
 {
 	assert_non_null(qp);
-	assert_non_null(dst);
-	assert_non_null(src);
 	assert_int_not_equal(flags, 0);
+	assert_true((src != NULL && dst != NULL) ||
+		(src == NULL && dst == NULL &&
+		dst_offset == 0 && src_offset == 0 && len == 0));
 
 	check_expected_ptr(qp);
 	check_expected_ptr(dst);
@@ -45,12 +46,14 @@ int
 rpma_mr_write(struct ibv_qp *qp,
 	struct rpma_mr_remote *dst, size_t dst_offset,
 	const struct rpma_mr_local *src,  size_t src_offset,
-	size_t len, int flags, const void *op_context)
+	size_t len, int flags, enum ibv_wr_opcode operation,
+	uint32_t imm, const void *op_context, bool fence)
 {
 	assert_non_null(qp);
-	assert_non_null(dst);
-	assert_non_null(src);
 	assert_int_not_equal(flags, 0);
+	assert_true((src != NULL && dst != NULL) ||
+		(src == NULL && dst == NULL &&
+		dst_offset == 0 && src_offset == 0 && len == 0));
 
 	check_expected_ptr(qp);
 	check_expected_ptr(dst);
@@ -59,7 +62,10 @@ rpma_mr_write(struct ibv_qp *qp,
 	check_expected(src_offset);
 	check_expected(len);
 	check_expected(flags);
+	check_expected(operation);
+	check_expected(imm);
 	check_expected_ptr(op_context);
+	check_expected(fence);
 
 	return mock_type(int);
 }
@@ -95,8 +101,14 @@ rpma_mr_dereg(struct rpma_mr_local **mr_ptr)
 	assert_non_null(mr_ptr);
 	check_expected_ptr(*mr_ptr);
 
+	int ret = mock_type(int);
+	/* XXX validate the errno handling */
+	if (ret == RPMA_E_PROVIDER)
+		errno = mock_type(int);
+
 	*mr_ptr = NULL;
-	return 0;
+
+	return ret;
 }
 
 /*
@@ -105,17 +117,20 @@ rpma_mr_dereg(struct rpma_mr_local **mr_ptr)
 int
 rpma_mr_send(struct ibv_qp *qp,
 	const struct rpma_mr_local *src,  size_t offset,
-	size_t len, int flags, const void *op_context)
+	size_t len, int flags, enum ibv_wr_opcode operation,
+	uint32_t imm, const void *op_context)
 {
 	assert_non_null(qp);
-	assert_non_null(src);
 	assert_int_not_equal(flags, 0);
+	assert_true(src != NULL || (offset == 0 && len == 0));
 
 	check_expected_ptr(qp);
 	check_expected_ptr(src);
 	check_expected(offset);
 	check_expected(len);
 	check_expected(flags);
+	check_expected(operation);
+	check_expected(imm);
 	check_expected_ptr(op_context);
 
 	return mock_type(int);
@@ -130,7 +145,7 @@ rpma_mr_recv(struct ibv_qp *qp,
 	size_t len, const void *op_context)
 {
 	assert_non_null(qp);
-	assert_non_null(dst);
+	assert_true(dst != NULL || (offset == 0 && len == 0));
 
 	check_expected_ptr(qp);
 	check_expected_ptr(dst);

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BSD-3-Clause
-/* Copyright 2020, Intel Corporation */
+/* Copyright 2020-2021, Intel Corporation */
 
 /*
  * example-02-read-to-volatile.c -- 'read to volatile' integration tests
@@ -16,41 +16,12 @@
 
 #define MOCK_READ_ADDR (&msg)
 #define MOCK_READ_LEN (strlen(msg) + 1)
+#define MOCK_READ_SRC_OFFSET 0
 
 static const char msg[] = "Hello client!";
 
-/* global mocks */
-static struct rdma_cm_id Cm_id;		/* mock CM ID */
-static struct ibv_qp Ibv_qp;		/* mock IBV QP */
-
 int client_main(int argc, char *argv[]);
 int server_main(int argc, char *argv[]);
-
-/*
- * create_descriptor -- create a descriptor from the given values
- */
-static int
-create_descriptor(void *desc,
-	uint64_t raddr, uint64_t size, uint32_t rkey, uint8_t usage)
-{
-	char *buff = (char *)desc;
-
-	uint64_t addr = htole64(raddr);
-	memcpy(buff, &addr, sizeof(uint64_t));
-	buff += sizeof(uint64_t);
-
-	uint64_t length = htole64(size);
-	memcpy(buff, &length, sizeof(uint64_t));
-	buff += sizeof(uint64_t);
-
-	uint32_t key = htole32(rkey);
-	memcpy(buff, &key, sizeof(uint32_t));
-	buff += sizeof(uint32_t);
-
-	*((uint8_t *)buff) = usage;
-
-	return 0;
-}
 
 /* tests */
 
@@ -136,13 +107,14 @@ test_client__success(void **unused)
 	expect_value(rdma_migrate_id, channel, MOCK_EVCH);
 	will_return(rdma_migrate_id, MOCK_OK);
 
-	struct posix_memalign_args allocated_raw = {0};
-	will_return(__wrap_posix_memalign, &allocated_raw);
+	struct mmap_args allocated_raw = {0};
+	will_return(__wrap_mmap, MOCK_OK);
+	will_return(__wrap_mmap, &allocated_raw);
 
 	expect_value(ibv_reg_mr, pd, MOCK_IBV_PD);
 	expect_value(ibv_reg_mr, length, MOCK_RAW_SIZE);
 	expect_value(ibv_reg_mr, access, IBV_ACCESS_LOCAL_WRITE);
-	will_return(ibv_reg_mr, &allocated_raw.ptr);
+	will_return(ibv_reg_mr, &allocated_raw.addr);
 	will_return(ibv_reg_mr, MOCK_MR_RAW);
 
 	expect_value(rdma_connect, id, &Cm_id);
@@ -167,6 +139,19 @@ test_client__success(void **unused)
 	expect_value(rdma_ack_cm_event, event, &f_event);
 	will_return(rdma_ack_cm_event, MOCK_OK);
 
+	/* configure mocks for rpma_read() */
+	expect_value(ibv_post_send_mock, qp, &Ibv_qp);
+	expect_value(ibv_post_send_mock, wr->opcode, IBV_WR_RDMA_READ);
+	expect_value(ibv_post_send_mock, wr->send_flags, IBV_SEND_SIGNALED);
+	expect_value(ibv_post_send_mock, wr->wr_id, 0 /* op_context */);
+	expect_value(ibv_post_send_mock, wr->num_sge, 1);
+	expect_value(ibv_post_send_mock, wr->sg_list->length, MOCK_READ_LEN);
+	expect_value(ibv_post_send_mock, wr->wr.rdma.remote_addr,
+			MOCK_READ_ADDR);
+	will_return(ibv_post_send_mock, (uint64_t *)&allocated.ptr);
+	will_return(ibv_post_send_mock, MOCK_READ_SRC_OFFSET);
+	will_return(ibv_post_send_mock, MOCK_OK);
+
 	/* configure mocks for rpma_conn_completion_wait() */
 	expect_value(ibv_get_cq_event, channel, MOCK_COMP_CHANNEL);
 	will_return(ibv_get_cq_event, MOCK_OK);
@@ -180,17 +165,9 @@ test_client__success(void **unused)
 	will_return(ibv_poll_cq_mock, 1);
 	will_return(ibv_poll_cq_mock, &wc);
 
-	/* configure mocks for rpma_read() */
-	expect_value(ibv_post_send_mock, qp, &Ibv_qp);
-	expect_value(ibv_post_send_mock, wr->opcode, IBV_WR_RDMA_READ);
-	expect_value(ibv_post_send_mock, wr->send_flags, IBV_SEND_SIGNALED);
-	expect_value(ibv_post_send_mock, wr->wr_id, 0 /* op_context */);
-	expect_value(ibv_post_send_mock, wr->num_sge, 1);
-	expect_value(ibv_post_send_mock, wr->sg_list->length, MOCK_READ_LEN);
-	expect_value(ibv_post_send_mock, wr->wr.rdma.remote_addr,
-			MOCK_READ_ADDR);
-	will_return(ibv_post_send_mock, (uint64_t *)&allocated.ptr);
-	will_return(ibv_post_send_mock, MOCK_OK);
+	/* configure mocks for rpma_conn_disconnect() */
+	expect_value(rdma_disconnect, id, &Cm_id);
+	will_return(rdma_disconnect, MOCK_OK);
 
 	/* configure mocks for rpma_conn_next_event() */
 	struct rdma_cm_event s_event = {0};
@@ -201,13 +178,11 @@ test_client__success(void **unused)
 	expect_value(rdma_ack_cm_event, event, &s_event);
 	will_return(rdma_ack_cm_event, MOCK_OK);
 
-	/* configure mocks for rpma_conn_disconnect() */
-	expect_value(rdma_disconnect, id, &Cm_id);
-	will_return(rdma_disconnect, MOCK_OK);
-
 	/* configure mocks for rpma_conn_delete() */
 	expect_value(ibv_dereg_mr, mr, MOCK_MR_RAW);
 	will_return(ibv_dereg_mr, MOCK_OK);
+	will_return(__wrap_munmap, &allocated_raw);
+	will_return(__wrap_munmap, MOCK_OK);
 
 	expect_value(rdma_destroy_qp, id, &Cm_id);
 
@@ -219,10 +194,10 @@ test_client__success(void **unused)
 	expect_value(rdma_destroy_id, id, &Cm_id);
 	will_return(rdma_destroy_id, MOCK_OK);
 
+	expect_value(rdma_destroy_event_channel, channel, MOCK_EVCH);
+
 	expect_value(ibv_dereg_mr, mr, MOCK_MR);
 	will_return(ibv_dereg_mr, MOCK_OK);
-
-	expect_value(rdma_destroy_event_channel, channel, MOCK_EVCH);
 
 	/* configure mocks for rpma_peer_delete() */
 	expect_value(ibv_dealloc_pd, pd, MOCK_IBV_PD);
@@ -301,7 +276,7 @@ test_server__success(void **unused)
 	/* configure mocks for rpma_ep_next_conn_req() */
 	struct rdma_cm_event f_event = {0};
 	const char *msg = "Hello client!";
-	f_event.param.conn.private_data = NULL;
+	f_event.param.conn.private_data = msg;
 	f_event.param.conn.private_data_len = MOCK_READ_LEN * sizeof(char);
 	f_event.event = RDMA_CM_EVENT_CONNECT_REQUEST;
 	f_event.id = &Cm_id;
@@ -332,13 +307,14 @@ test_server__success(void **unused)
 	expect_value(rdma_migrate_id, channel, MOCK_EVCH);
 	will_return(rdma_migrate_id, MOCK_OK);
 
-	struct posix_memalign_args allocated_raw = {0};
-	will_return(__wrap_posix_memalign, &allocated_raw);
+	struct mmap_args allocated_raw = {0};
+	will_return(__wrap_mmap, MOCK_OK);
+	will_return(__wrap_mmap, &allocated_raw);
 
 	expect_value(ibv_reg_mr, pd, MOCK_IBV_PD);
 	expect_value(ibv_reg_mr, length, MOCK_RAW_SIZE);
 	expect_value(ibv_reg_mr, access, IBV_ACCESS_LOCAL_WRITE);
-	will_return(ibv_reg_mr, &allocated_raw.ptr);
+	will_return(ibv_reg_mr, &allocated_raw.addr);
 	will_return(ibv_reg_mr, MOCK_MR_RAW);
 
 	/* configure mocks for rpma_conn_next_event() */
@@ -355,10 +331,6 @@ test_server__success(void **unused)
 	expect_value(rdma_ack_cm_event, event, &s_event);
 	will_return(rdma_ack_cm_event, MOCK_OK);
 
-	/* configure mocks for rpma_conn_disconnect() */
-	expect_value(rdma_disconnect, id, &Cm_id);
-	will_return(rdma_disconnect, MOCK_OK);
-
 	/* configure mocks for rpma_conn_next_event() */
 	struct rdma_cm_event t_event = {0};
 	t_event.event = RDMA_CM_EVENT_DISCONNECTED;
@@ -368,9 +340,15 @@ test_server__success(void **unused)
 	expect_value(rdma_ack_cm_event, event, &t_event);
 	will_return(rdma_ack_cm_event, MOCK_OK);
 
+	/* configure mocks for rpma_conn_disconnect() */
+	expect_value(rdma_disconnect, id, &Cm_id);
+	will_return(rdma_disconnect, MOCK_OK);
+
 	/* configure mocks for rpma_conn_delete() */
 	expect_value(ibv_dereg_mr, mr, MOCK_MR_RAW);
 	will_return(ibv_dereg_mr, MOCK_OK);
+	will_return(__wrap_munmap, &allocated_raw);
+	will_return(__wrap_munmap, MOCK_OK);
 
 	expect_value(rdma_destroy_qp, id, &Cm_id);
 
@@ -382,10 +360,10 @@ test_server__success(void **unused)
 	expect_value(rdma_destroy_id, id, &Cm_id);
 	will_return(rdma_destroy_id, MOCK_OK);
 
+	expect_value(rdma_destroy_event_channel, channel, MOCK_EVCH);
+
 	expect_value(ibv_dereg_mr, mr, MOCK_MR);
 	will_return(ibv_dereg_mr, MOCK_OK);
-
-	expect_value(rdma_destroy_event_channel, channel, MOCK_EVCH);
 
 	/* configure mocks for rpma_ep_shutdown() */
 	expect_value(rdma_destroy_id, id, &Cm_id);

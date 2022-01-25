@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: BSD-3-Clause */
 /* Copyright 2020, Intel Corporation */
+/* Copyright 2021, Fujitsu */
 
 /*
  * test-common.h -- a test's common header
@@ -14,6 +15,7 @@
 #define MOCK_PORT		"1234" /* a random port number */
 #define MOCK_TIMEOUT_MS		5678
 #define MOCK_Q_SIZE		123
+#define MOCK_IMM_DATA		0x87654321
 
 /* random values */
 #define MOCK_RPMA_MR_LOCAL	(struct rpma_mr_local *)0xC411
@@ -29,9 +31,14 @@
 #define MOCK_LEN		(size_t)0xC415
 #define MOCK_FLAGS		(int)0xC416
 #define MOCK_OP_CONTEXT		(void *)0xC417
+#define MOCK_NOFENCE		false
+#define MOCK_FENCE		true
+#define MOCK_COMPLETION_FD	0x00FE
+#define MOCK_QP_NUM		1289
 
 #define MOCK_OK			0
 #define MOCK_ERRNO		123456
+#define MOCK_ERRNO2		234567
 
 #define MOCK_PASSTHROUGH	0
 #define MOCK_VALIDATE		1

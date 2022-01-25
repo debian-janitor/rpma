@@ -1,6 +1,7 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright 2020, Intel Corporation
+# Copyright 2021, Fujitsu
 #
 
 cmake_minimum_required(VERSION 3.3)
@@ -22,10 +23,14 @@ find_package(PkgConfig QUIET)
 
 if(PKG_CONFIG_FOUND)
 	pkg_check_modules(LIBRPMA librpma)
+	pkg_check_modules(LIBIBVERBS libibverbs)
 	pkg_check_modules(LIBPMEM QUIET libpmem>=${LIBPMEM_REQUIRED_VERSION})
 endif()
 if(NOT LIBRPMA_FOUND)
 	find_package(LIBRPMA REQUIRED librpma)
+endif()
+if(NOT LIBIBVERBS_FOUND)
+	find_package(LIBIBVERBS REQUIRED libibverbs)
 endif()
 if(NOT LIBPMEM_FOUND)
 	find_package(LIBPMEM ${LIBPMEM_REQUIRED_VERSION} QUIET)
@@ -35,18 +40,18 @@ link_directories(${LIBRPMA_LIBRARY_DIRS})
 
 function(add_example name)
 	set(srcs ${ARGN})
-	add_executable(example-${name} ${srcs})
-	target_include_directories(example-${name}
+	add_executable(${name} ${srcs})
+	target_include_directories(${name}
 		PRIVATE
 			${LIBRPMA_INCLUDE_DIRS}
 			../common)
-	target_link_libraries(example-${name} rpma ${LIBRT_LIBRARIES})
+	target_link_libraries(${name} rpma ${LIBIBVERBS_LIBRARIES} ${LIBRT_LIBRARIES})
 
 	if(LIBPMEM_FOUND)
-		target_include_directories(example-${name}
+		target_include_directories(${name}
 			PRIVATE ${LIBPMEM_INCLUDE_DIRS})
-		target_link_libraries(example-${name} ${LIBPMEM_LIBRARIES})
-		target_compile_definitions(example-${name}
+		target_link_libraries(${name} ${LIBPMEM_LIBRARIES})
+		target_compile_definitions(${name}
 			PRIVATE USE_LIBPMEM)
 	endif()
 endfunction()

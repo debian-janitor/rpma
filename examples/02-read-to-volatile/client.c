@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
-/* Copyright 2020, Intel Corporation */
+/* Copyright 2020-2021, Intel Corporation */
+/* Copyright 2021, Fujitsu */
 
 /*
  * client.c -- a client of the read-to-volatile example
@@ -15,9 +16,12 @@
 
 #include "common-conn.h"
 
-#ifdef TEST_MOCK_MAIN
+#ifdef TEST_USE_CMOCKA
 #include "cmocka_headers.h"
 #include "cmocka_alloc.h"
+#endif
+
+#ifdef TEST_MOCK_MAIN
 #define main client_main
 #endif
 
@@ -74,7 +78,7 @@ main(int argc, char *argv[])
 		goto err_mr_free;
 
 	/* establish a new connection to a server listening at addr:port */
-	ret = client_connect(peer, addr, port, NULL, &conn);
+	ret = client_connect(peer, addr, port, NULL, NULL, &conn);
 	if (ret)
 		goto err_mr_dereg;
 
@@ -118,20 +122,37 @@ main(int argc, char *argv[])
 	if (ret)
 		goto err_mr_remote_delete;
 
+	/* get the connection's main CQ */
+	struct rpma_cq *cq = NULL;
+	ret = rpma_conn_get_cq(conn, &cq);
+	if (ret)
+		goto err_mr_remote_delete;
+
 	/* wait for the completion to be ready */
-	ret = rpma_conn_completion_wait(conn);
+	ret = rpma_cq_wait(cq);
 	if (ret)
 		goto err_mr_remote_delete;
 
 	/* wait for a completion of the RDMA read */
-	ret = rpma_conn_completion_get(conn, &cmpl);
-	if (cmpl.op != RPMA_OP_READ) {
-		fprintf(stderr,
-				"rpma_conn_completion_get returned a completion of an unexpected operation: %d\n",
-				cmpl.op);
-	} else if (cmpl.op_status == IBV_WC_SUCCESS) {
-		fprintf(stdout, "Read a message: %s\n", (char *)dst_ptr);
+	ret = rpma_cq_get_completion(cq, &cmpl);
+	if (ret)
+		goto err_mr_remote_delete;
+
+	if (cmpl.op_status != IBV_WC_SUCCESS) {
+		ret = -1;
+		(void) fprintf(stderr, "rpma_read() failed: %s\n",
+				ibv_wc_status_str(cmpl.op_status));
+		goto err_mr_remote_delete;
 	}
+
+	if (cmpl.op != RPMA_OP_READ) {
+		ret = -1;
+		(void) fprintf(stderr, "unexpected cmpl.op value (%d != %d)\n",
+				cmpl.op, RPMA_OP_READ);
+		goto err_mr_remote_delete;
+	}
+
+	(void) fprintf(stdout, "Read a message: %s\n", (char *)dst_ptr);
 
 err_mr_remote_delete:
 	/* delete the remote memory region's structure */

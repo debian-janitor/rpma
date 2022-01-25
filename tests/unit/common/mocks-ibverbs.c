@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
-/* Copyright 2020, Intel Corporation */
+/* Copyright 2020-2021, Intel Corporation */
+/* Copyright 2021, Fujitsu */
 
 /*
  * mock-ibverbs.c -- libibverbs mocks
@@ -15,7 +16,11 @@
 /* mocked IBV entities */
 struct verbs_context Verbs_context;
 struct ibv_comp_channel Ibv_comp_channel;
+struct ibv_device Ibv_device;
+struct ibv_context Ibv_context = {&Ibv_device};
+struct ibv_pd Ibv_pd = {&Ibv_context, 0};
 struct ibv_cq Ibv_cq;
+struct ibv_cq Ibv_rcq;
 struct ibv_qp Ibv_qp;
 struct ibv_mr Ibv_mr;
 
@@ -254,9 +259,21 @@ ibv_post_send_mock(struct ibv_qp *qp, struct ibv_send_wr *wr,
 	assert_non_null(bad_wr);
 
 	assert_int_equal(qp, args->qp);
+	/*
+	 * XXX all wr fields should be validated to avoid
+	 * posting uninitialized values
+	 */
 	assert_int_equal(wr->opcode, args->opcode);
 	assert_int_equal(wr->send_flags, args->send_flags);
 	assert_int_equal(wr->wr_id, args->wr_id);
+	if (args->opcode != IBV_WR_SEND &&
+	    args->opcode != IBV_WR_SEND_WITH_IMM) {
+		assert_int_equal(wr->wr.rdma.remote_addr, args->remote_addr);
+		assert_int_equal(wr->wr.rdma.rkey, args->rkey);
+	}
+	if (args->opcode == IBV_WR_SEND_WITH_IMM ||
+	    args->opcode == IBV_WR_RDMA_WRITE_WITH_IMM)
+		assert_int_equal(wr->imm_data, args->imm_data);
 	assert_null(wr->next);
 
 	return args->ret;
@@ -330,3 +347,28 @@ ibv_wc_status_str(enum ibv_wc_status status)
 {
 	return "";
 }
+
+#ifdef IBV_ADVISE_MR_SUPPORTED
+/*
+ * ibv_advise_mr_mock -- mock of ibv_advise_mr()
+ */
+int
+ibv_advise_mr_mock(struct ibv_pd *pd,
+				enum ibv_advise_mr_advice advice,
+				uint32_t flags,
+				struct ibv_sge *sg_list,
+				uint32_t num_sge)
+{
+	check_expected_ptr(pd);
+	check_expected(advice);
+	check_expected(flags);
+
+	assert_non_null(sg_list);
+	check_expected(sg_list->lkey);
+	check_expected_ptr(sg_list->addr);
+	check_expected(sg_list->length);
+	check_expected(num_sge);
+
+	return mock_type(int);
+}
+#endif

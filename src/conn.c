@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
-/* Copyright 2020, Intel Corporation */
+/* Copyright 2020-2021, Intel Corporation */
+/* Copyright 2021, Fujitsu */
 
 /*
  * conn.c -- librpma connection-related implementations
@@ -22,8 +23,8 @@
 struct rpma_conn {
 	struct rdma_cm_id *id; /* a CM ID of the connection */
 	struct rdma_event_channel *evch; /* event channel of the CM ID */
-	struct ibv_comp_channel *channel; /* completion event channel */
-	struct ibv_cq *cq; /* completion queue of the CM ID */
+	struct rpma_cq *cq; /* main CQ */
+	struct rpma_cq *rcq; /* receive CQ */
 
 	struct rpma_conn_private_data data; /* private data of the CM ID */
 	struct rpma_flush *flush; /* flushing object */
@@ -42,7 +43,8 @@ struct rpma_conn {
  */
 int
 rpma_conn_new(struct rpma_peer *peer, struct rdma_cm_id *id,
-		struct ibv_cq *cq, struct rpma_conn **conn_ptr)
+		struct rpma_cq *cq, struct rpma_cq *rcq,
+		struct rpma_conn **conn_ptr)
 {
 	if (peer == NULL || id == NULL || cq == NULL || conn_ptr == NULL)
 		return RPMA_E_INVAL;
@@ -74,8 +76,8 @@ rpma_conn_new(struct rpma_peer *peer, struct rdma_cm_id *id,
 
 	conn->id = id;
 	conn->evch = evch;
-	conn->channel = cq->channel;
 	conn->cq = cq;
+	conn->rcq = rcq;
 	conn->data.ptr = NULL;
 	conn->data.len = 0;
 	conn->flush = flush;
@@ -98,14 +100,18 @@ err_destroy_evch:
 }
 
 /*
- * rpma_conn_set_private_data -- allocate a buffer and fill
- * the private data of the CM ID
+ * rpma_conn_transfer_private_data -- transfer the private data to
+ * the connection (a take over).
  */
-int
-rpma_conn_set_private_data(struct rpma_conn *conn,
+void
+rpma_conn_transfer_private_data(struct rpma_conn *conn,
 		struct rpma_conn_private_data *pdata)
 {
-	return rpma_private_data_copy(&conn->data, pdata);
+	conn->data.ptr = pdata->ptr;
+	conn->data.len = pdata->len;
+
+	pdata->ptr = NULL;
+	pdata->len = 0;
 }
 
 /* public librpma API */
@@ -172,6 +178,9 @@ rpma_conn_next_event(struct rpma_conn *conn, enum rpma_conn_event *event)
 		case RDMA_CM_EVENT_DISCONNECTED:
 		case RDMA_CM_EVENT_TIMEWAIT_EXIT:
 			*event = RPMA_CONN_CLOSED;
+			break;
+		case RDMA_CM_EVENT_REJECTED:
+			*event = RPMA_CONN_REJECTED;
 			break;
 		default:
 			RPMA_LOG_WARNING("%s: %s",
@@ -242,23 +251,17 @@ rpma_conn_delete(struct rpma_conn **conn_ptr)
 
 	ret = rpma_flush_delete(&conn->flush);
 	if (ret)
-		goto err_destroy_cq;
+		goto err_destroy_qp;
 
 	rdma_destroy_qp(conn->id);
 
-	errno = ibv_destroy_cq(conn->cq);
-	if (errno) {
-		RPMA_LOG_ERROR_WITH_ERRNO(errno, "ibv_destroy_cq()");
-		ret = RPMA_E_PROVIDER;
-		goto err_destroy_comp_channel;
-	}
+	ret = rpma_cq_delete(&conn->rcq);
+	if (ret)
+		goto err_rpma_cq_delete;
 
-	errno = ibv_destroy_comp_channel(conn->channel);
-	if (errno) {
-		RPMA_LOG_ERROR_WITH_ERRNO(errno, "ibv_destroy_comp_channel()");
-		ret = RPMA_E_PROVIDER;
+	ret = rpma_cq_delete(&conn->cq);
+	if (ret)
 		goto err_destroy_id;
-	}
 
 	if (rdma_destroy_id(conn->id)) {
 		RPMA_LOG_ERROR_WITH_ERRNO(errno, "rdma_destroy_id()");
@@ -274,10 +277,11 @@ rpma_conn_delete(struct rpma_conn **conn_ptr)
 
 	return 0;
 
-err_destroy_cq:
-	(void) ibv_destroy_cq(conn->cq);
-err_destroy_comp_channel:
-	(void) ibv_destroy_comp_channel(conn->channel);
+err_destroy_qp:
+	rdma_destroy_qp(conn->id);
+	(void) rpma_cq_delete(&conn->rcq);
+err_rpma_cq_delete:
+	(void) rpma_cq_delete(&conn->cq);
 err_destroy_id:
 	(void) rdma_destroy_id(conn->id);
 err_destroy_event_channel:
@@ -298,7 +302,10 @@ rpma_read(struct rpma_conn *conn,
 	const struct rpma_mr_remote *src,  size_t src_offset,
 	size_t len, int flags, const void *op_context)
 {
-	if (conn == NULL || dst == NULL || src == NULL || flags == 0)
+	if (conn == NULL || flags == 0 ||
+	    ((src == NULL || dst == NULL) &&
+	    (src != NULL || dst != NULL || dst_offset != 0 || src_offset != 0 ||
+	    len != 0)))
 		return RPMA_E_INVAL;
 
 	return rpma_mr_read(conn->id->qp,
@@ -316,13 +323,41 @@ rpma_write(struct rpma_conn *conn,
 	const struct rpma_mr_local *src,  size_t src_offset,
 	size_t len, int flags, const void *op_context)
 {
-	if (conn == NULL || dst == NULL || src == NULL || flags == 0)
+	if (conn == NULL || flags == 0 ||
+	    ((src == NULL || dst == NULL) &&
+	    (src != NULL || dst != NULL || dst_offset != 0 || src_offset != 0 ||
+	    len != 0)))
 		return RPMA_E_INVAL;
 
 	return rpma_mr_write(conn->id->qp,
 			dst, dst_offset,
 			src, src_offset,
-			len, flags, op_context);
+			len, flags,
+			IBV_WR_RDMA_WRITE, 0,
+			op_context, false);
+}
+
+/*
+ * rpma_write_with_imm -- initiate the write operation with immediate data
+ */
+int
+rpma_write_with_imm(struct rpma_conn *conn,
+	struct rpma_mr_remote *dst, size_t dst_offset,
+	const struct rpma_mr_local *src,  size_t src_offset,
+	size_t len, int flags, uint32_t imm, const void *op_context)
+{
+	if (conn == NULL || flags == 0 ||
+	    ((src == NULL || dst == NULL) &&
+	    (src != NULL || dst != NULL || dst_offset != 0 || src_offset != 0 ||
+	    len != 0)))
+		return RPMA_E_INVAL;
+
+	return rpma_mr_write(conn->id->qp,
+			dst, dst_offset,
+			src, src_offset,
+			len, flags,
+			IBV_WR_RDMA_WRITE_WITH_IMM, imm,
+			op_context, false);
 }
 
 /*
@@ -343,7 +378,9 @@ rpma_write_atomic(struct rpma_conn *conn,
 	return rpma_mr_write(conn->id->qp,
 			dst, dst_offset,
 			src, src_offset,
-			RPMA_ATOMIC_WRITE_ALIGNMENT, flags, op_context);
+			RPMA_ATOMIC_WRITE_ALIGNMENT, flags,
+			IBV_WR_RDMA_WRITE, 0,
+			op_context, true);
 }
 
 /*
@@ -395,12 +432,32 @@ rpma_send(struct rpma_conn *conn,
     const struct rpma_mr_local *src, size_t offset, size_t len,
     int flags, const void *op_context)
 {
-	if (conn == NULL || src == NULL || flags == 0)
+	if (conn == NULL || flags == 0 ||
+	    (src == NULL && (offset != 0 || len != 0)))
 		return RPMA_E_INVAL;
 
 	return rpma_mr_send(conn->id->qp,
 			src, offset, len,
-			flags, op_context);
+			flags, IBV_WR_SEND,
+			0, op_context);
+}
+
+/*
+ * rpma_send_with_imm -- initiate the send operation with immediate data
+ */
+int
+rpma_send_with_imm(struct rpma_conn *conn,
+	const struct rpma_mr_local *src, size_t offset, size_t len,
+	int flags, uint32_t imm, const void *op_context)
+{
+	if (conn == NULL || flags == 0 ||
+	    (src == NULL && (offset != 0 || len != 0)))
+		return RPMA_E_INVAL;
+
+	return rpma_mr_send(conn->id->qp,
+			src, offset, len,
+			flags, IBV_WR_SEND_WITH_IMM,
+			imm, op_context);
 }
 
 /*
@@ -411,12 +468,54 @@ rpma_recv(struct rpma_conn *conn,
     struct rpma_mr_local *dst, size_t offset, size_t len,
     const void *op_context)
 {
-	if (conn == NULL || dst == NULL)
+	if (conn == NULL || (dst == NULL && (offset != 0 || len != 0)))
 		return RPMA_E_INVAL;
 
 	return rpma_mr_recv(conn->id->qp,
 			dst, offset, len,
 			op_context);
+}
+
+/*
+ * rpma_conn_get_qp_num -- get the connection's qp_num
+ */
+int
+rpma_conn_get_qp_num(const struct rpma_conn *conn, uint32_t *qp_num)
+{
+	if (conn == NULL || qp_num == NULL)
+		return RPMA_E_INVAL;
+
+	*qp_num = conn->id->qp->qp_num;
+
+	return 0;
+}
+
+/*
+ * rpma_conn_get_cq -- get the connection's main CQ
+ */
+int
+rpma_conn_get_cq(const struct rpma_conn *conn, struct rpma_cq **cq_ptr)
+{
+	if (conn == NULL || cq_ptr == NULL)
+		return RPMA_E_INVAL;
+
+	*cq_ptr = conn->cq;
+
+	return 0;
+}
+
+/*
+ * rpma_conn_get_rcq -- get the connection's receive CQ
+ */
+int
+rpma_conn_get_rcq(const struct rpma_conn *conn, struct rpma_cq **rcq_ptr)
+{
+	if (conn == NULL || rcq_ptr == NULL)
+		return RPMA_E_INVAL;
+
+	*rcq_ptr = conn->rcq;
+
+	return 0;
 }
 
 /*
@@ -429,13 +528,11 @@ rpma_conn_get_completion_fd(const struct rpma_conn *conn, int *fd)
 	if (conn == NULL || fd == NULL)
 		return RPMA_E_INVAL;
 
-	*fd = conn->channel->fd;
-
-	return 0;
+	return rpma_cq_get_fd(conn->cq, fd);
 }
 
 /*
- * rpma_conn_completion_wait -- wait for completions
+ * rpma_conn_completion_wait -- wait for a completion
  */
 int
 rpma_conn_completion_wait(struct rpma_conn *conn)
@@ -443,29 +540,7 @@ rpma_conn_completion_wait(struct rpma_conn *conn)
 	if (conn == NULL)
 		return RPMA_E_INVAL;
 
-	/* wait for the completion event */
-	struct ibv_cq *ev_cq;	/* unused */
-	void *ev_ctx;		/* unused */
-	if (ibv_get_cq_event(conn->channel, &ev_cq, &ev_ctx))
-		return RPMA_E_NO_COMPLETION;
-
-	/*
-	 * ACK the collected CQ event.
-	 *
-	 * XXX for performance reasons, it may be beneficial to ACK more than
-	 * one CQ event at the same time.
-	 */
-	ibv_ack_cq_events(conn->cq, 1 /* # of CQ events */);
-
-	/* request for the next event on the CQ channel */
-	errno = ibv_req_notify_cq(conn->cq,
-			0 /* all completions */);
-	if (errno) {
-		RPMA_LOG_ERROR_WITH_ERRNO(errno, "ibv_req_notify_cq()");
-		return RPMA_E_PROVIDER;
-	}
-
-	return 0;
+	return rpma_cq_wait(conn->cq);
 }
 
 /*
@@ -478,55 +553,7 @@ rpma_conn_completion_get(struct rpma_conn *conn,
 	if (conn == NULL || cmpl == NULL)
 		return RPMA_E_INVAL;
 
-	struct ibv_wc wc = {0};
-	int result = ibv_poll_cq(conn->cq, 1 /* num_entries */, &wc);
-	if (result == 0) {
-		/*
-		 * There may be an extra CQ event with no completion in the CQ.
-		 */
-		RPMA_LOG_DEBUG("No completion in the CQ");
-		return RPMA_E_NO_COMPLETION;
-	} else if (result < 0) {
-		/* ibv_poll_cq() may return only -1; no errno provided */
-		RPMA_LOG_ERROR("ibv_poll_cq() failed (no details available)");
-		return RPMA_E_PROVIDER;
-	} else if (result > 1) {
-		RPMA_LOG_ERROR(
-			"ibv_poll_cq() returned %d where 0 or 1 is expected",
-			result);
-		return RPMA_E_UNKNOWN;
-	}
-
-	switch (wc.opcode) {
-	case IBV_WC_RDMA_READ:
-		cmpl->op = RPMA_OP_READ;
-		break;
-	case IBV_WC_RDMA_WRITE:
-		cmpl->op = RPMA_OP_WRITE;
-		break;
-	case IBV_WC_SEND:
-		cmpl->op = RPMA_OP_SEND;
-		break;
-	case IBV_WC_RECV:
-		cmpl->op = RPMA_OP_RECV;
-		break;
-	default:
-		RPMA_LOG_ERROR("unsupported wc.opcode == %d", wc.opcode);
-		return RPMA_E_NOSUPP;
-	}
-
-	cmpl->op_context = (void *)wc.wr_id;
-	cmpl->byte_len = wc.byte_len;
-	cmpl->op_status = wc.status;
-
-	if (unlikely(wc.status != IBV_WC_SUCCESS)) {
-		RPMA_LOG_WARNING("failed rpma_completion(op_context=0x%" PRIx64
-				", op_status=%s)",
-				cmpl->op_context,
-				ibv_wc_status_str(cmpl->op_status));
-	}
-
-	return 0;
+	return rpma_cq_get_completion(conn->cq, cmpl);
 }
 
 /*

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
-/* Copyright 2020, Intel Corporation */
+/* Copyright 2020-2022, Intel Corporation */
+/* Copyright 2021, Fujitsu */
 
 /*
  * server.c -- a server of the read-to-persistent example
@@ -11,15 +12,14 @@
 #include <librpma.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include "common-conn.h"
 
 #ifdef USE_LIBPMEM
 #include <libpmem.h>
-#define USAGE_STR "usage: %s <server_address> <port> [<pmem-path>]\n"
+#define USAGE_STR "usage: %s <server_address> <port> [<pmem-path>]\n"PMEM_USAGE
 #else
 #define USAGE_STR "usage: %s <server_address> <port>\n"
 #endif /* USE_LIBPMEM */
-
-#include "common-conn.h"
 
 int
 main(int argc, char *argv[])
@@ -40,26 +40,32 @@ main(int argc, char *argv[])
 	int ret;
 
 	/* resources - memory region */
-	void *dst_ptr = NULL;
-	size_t dst_size = 0;
+	void *mr_ptr = NULL;
+	size_t mr_size = 0;
 	size_t dst_offset = 0;
 	struct rpma_mr_local *dst_mr = NULL;
 	struct rpma_mr_remote *src_mr = NULL;
 
 #ifdef USE_LIBPMEM
+	char *pmem_path = NULL;
 	int is_pmem = 0;
 	if (argc >= 4) {
-		char *path = argv[3];
+		pmem_path = argv[3];
 
 		/* map the file */
-		dst_ptr = pmem_map_file(path, 0 /* len */, 0 /* flags */,
-				0 /* mode */, &dst_size, &is_pmem);
-		if (dst_ptr == NULL)
+		mr_ptr = pmem_map_file(pmem_path, 0 /* len */, 0 /* flags */,
+				0 /* mode */, &mr_size, &is_pmem);
+		if (mr_ptr == NULL) {
+			(void) fprintf(stderr, "pmem_map_file() for %s "
+					"failed\n", pmem_path);
 			return -1;
+		}
 
 		/* pmem is expected */
 		if (!is_pmem) {
-			(void) pmem_unmap(dst_ptr, dst_size);
+			(void) fprintf(stderr, "%s is not an actual PMEM\n",
+					pmem_path);
+			(void) pmem_unmap(mr_ptr, mr_size);
 			return -1;
 		}
 
@@ -70,10 +76,10 @@ main(int argc, char *argv[])
 		 * the signature to convey any meaningful content and be usable
 		 * as a persistent store.
 		 */
-		if (dst_size < SIGNATURE_LEN) {
+		if (mr_size < SIGNATURE_LEN) {
 			(void) fprintf(stderr, "%s too small (%zu < %zu)\n",
-					path, dst_size, SIGNATURE_LEN);
-			(void) pmem_unmap(dst_ptr, dst_size);
+					pmem_path, mr_size, SIGNATURE_LEN);
+			(void) pmem_unmap(mr_ptr, mr_size);
 			return -1;
 		}
 		dst_offset = SIGNATURE_LEN;
@@ -82,10 +88,10 @@ main(int argc, char *argv[])
 		 * All of the space under the offset is intended for
 		 * the string contents. Space is assumed to be at least 1 KiB.
 		 */
-		if (dst_size - dst_offset < KILOBYTE) {
+		if (mr_size - dst_offset < KILOBYTE) {
 			fprintf(stderr, "%s too small (%zu < %zu)\n",
-					path, dst_size, KILOBYTE + dst_offset);
-			(void) pmem_unmap(dst_ptr, dst_size);
+				pmem_path, mr_size, KILOBYTE + dst_offset);
+			(void) pmem_unmap(mr_ptr, mr_size);
 			return -1;
 		}
 
@@ -93,24 +99,25 @@ main(int argc, char *argv[])
 		 * If the signature is not in place the persistent content has
 		 * to be initialized and persisted.
 		 */
-		if (strncmp(dst_ptr, SIGNATURE_STR, SIGNATURE_LEN) != 0) {
+		if (strncmp(mr_ptr, SIGNATURE_STR, SIGNATURE_LEN) != 0) {
 			/* write an initial empty string and persist it */
-			((char *)dst_ptr + dst_offset)[0] = '\0';
-			pmem_persist(dst_ptr, 1);
+			((char *)mr_ptr + dst_offset)[0] = '\0';
+			pmem_persist(mr_ptr, 1);
 			/* write the signature to mark the content as valid */
-			memcpy(dst_ptr, SIGNATURE_STR, SIGNATURE_LEN);
-			pmem_persist(dst_ptr, SIGNATURE_LEN);
+			memcpy(mr_ptr, SIGNATURE_STR, SIGNATURE_LEN);
+			pmem_persist(mr_ptr, SIGNATURE_LEN);
 		}
 	}
-#endif
+#endif /* USE_LIBPMEM */
 
 	/* if no pmem support or it is not provided */
-	if (dst_ptr == NULL) {
-		dst_ptr = malloc_aligned(KILOBYTE);
-		if (dst_ptr == NULL)
+	if (mr_ptr == NULL) {
+		(void) fprintf(stderr, NO_PMEM_MSG);
+		mr_ptr = malloc_aligned(KILOBYTE);
+		if (mr_ptr == NULL)
 			return -1;
 
-		dst_size = KILOBYTE;
+		mr_size = KILOBYTE;
 	}
 
 	/* RPMA resources */
@@ -132,16 +139,27 @@ main(int argc, char *argv[])
 		goto err_peer_delete;
 
 	/* register the memory */
-	ret = rpma_mr_reg(peer, dst_ptr, dst_size, RPMA_MR_USAGE_READ_DST,
+	ret = rpma_mr_reg(peer, mr_ptr, mr_size, RPMA_MR_USAGE_READ_DST,
 				&dst_mr);
 	if (ret)
 		goto err_ep_shutdown;
+
+#ifdef USE_LIBPMEM
+	/* rpma_mr_advise() should be called only in case of FsDAX */
+	if (is_pmem && strstr(pmem_path, "/dev/dax") == NULL) {
+		ret = rpma_mr_advise(dst_mr, 0, mr_size,
+			IBV_ADVISE_MR_ADVICE_PREFETCH_WRITE,
+			IBV_ADVISE_MR_FLAG_FLUSH);
+		if (ret)
+			goto err_mr_dereg;
+	}
+#endif /* USE_LIBPMEM */
 
 	/*
 	 * Wait for an incoming connection request, accept it and wait for its
 	 * establishment.
 	 */
-	ret = server_accept_connection(ep, NULL, &conn);
+	ret = server_accept_connection(ep, NULL, NULL, &conn);
 	if (ret)
 		goto err_mr_dereg;
 
@@ -159,8 +177,8 @@ main(int argc, char *argv[])
 		goto err_disconnect;
 
 	/* if the string content is not empty */
-	if (((char *)dst_ptr + dst_offset)[0] != '\0') {
-		(void) printf("Old value: %s\n", (char *)dst_ptr + dst_offset);
+	if (((char *)mr_ptr + dst_offset)[0] != '\0') {
+		(void) printf("Old value: %s\n", (char *)mr_ptr + dst_offset);
 	}
 
 	ret = rpma_read(conn, dst_mr, dst_offset, src_mr, src_data->data_offset,
@@ -168,35 +186,43 @@ main(int argc, char *argv[])
 	if (ret)
 		goto err_mr_remote_delete;
 
-	/* wait for the completion to be ready */
-	ret = rpma_conn_completion_wait(conn);
+	/* get the connection's main CQ */
+	struct rpma_cq *cq = NULL;
+	ret = rpma_conn_get_cq(conn, &cq);
 	if (ret)
 		goto err_mr_remote_delete;
 
-	ret = rpma_conn_completion_get(conn, &cmpl);
+	/* wait for the completion to be ready */
+	ret = rpma_cq_wait(cq);
 	if (ret)
 		goto err_mr_remote_delete;
+
+	ret = rpma_cq_get_completion(cq, &cmpl);
+	if (ret)
+		goto err_mr_remote_delete;
+
+	if (cmpl.op_status != IBV_WC_SUCCESS) {
+		ret = -1;
+		(void) fprintf(stderr, "rpma_read() failed: %s\n",
+				ibv_wc_status_str(cmpl.op_status));
+		goto err_mr_remote_delete;
+	}
 
 	if (cmpl.op != RPMA_OP_READ) {
+		ret = -1;
 		(void) fprintf(stderr,
 				"unexpected cmpl.op value (%d != %d)\n",
 				cmpl.op, RPMA_OP_READ);
 		goto err_mr_remote_delete;
 	}
 
-	if (cmpl.op_status != IBV_WC_SUCCESS) {
-		(void) fprintf(stderr, "rpma_read failed with %d\n",
-				cmpl.op_status);
-		goto err_mr_remote_delete;
-	}
-
 #ifdef USE_LIBPMEM
 	if (is_pmem) {
-		pmem_persist((char *)dst_ptr + dst_offset, KILOBYTE);
+		pmem_persist((char *)mr_ptr + dst_offset, KILOBYTE);
 	}
-#endif
+#endif /* USE_LIBPMEM */
 
-	(void) printf("New value: %s\n", (char *)dst_ptr + dst_offset);
+	(void) printf("New value: %s\n", (char *)mr_ptr + dst_offset);
 
 err_mr_remote_delete:
 	(void) rpma_mr_remote_delete(&src_mr);
@@ -223,13 +249,13 @@ err_peer_delete:
 err_free:
 #ifdef USE_LIBPMEM
 	if (is_pmem) {
-		pmem_unmap(dst_ptr, dst_size);
-		dst_ptr = NULL;
+		pmem_unmap(mr_ptr, mr_size);
+		mr_ptr = NULL;
 	}
 #endif
 
-	if (dst_ptr != NULL)
-		free(dst_ptr);
+	if (mr_ptr != NULL)
+		free(mr_ptr);
 
 	return ret;
 }

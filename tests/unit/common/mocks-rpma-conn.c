@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
-/* Copyright 2020, Intel Corporation */
+/* Copyright 2020-2021, Intel Corporation */
+/* Copyright 2021, Fujitsu */
 
 /*
  * mocks-rpma-conn.c -- librpma conn.c module mocks
@@ -10,18 +11,20 @@
 
 #include "cmocka_headers.h"
 #include "mocks-ibverbs.h"
-#include "test-common.h"
+#include "mocks-rpma-cq.h"
 
 /*
  * rpma_conn_new -- rpma_conn_new()  mock
  */
 int
 rpma_conn_new(struct rpma_peer *peer, struct rdma_cm_id *id,
-		struct ibv_cq *cq, struct rpma_conn **conn_ptr)
+		struct rpma_cq *cq, struct rpma_cq *rcq,
+		struct rpma_conn **conn_ptr)
 {
 	assert_ptr_equal(peer, MOCK_PEER);
 	check_expected_ptr(id);
-	assert_ptr_equal(cq, MOCK_IBV_CQ);
+	assert_ptr_equal(cq, MOCK_RPMA_CQ);
+	check_expected_ptr(rcq);
 
 	assert_non_null(conn_ptr);
 
@@ -64,10 +67,10 @@ rpma_conn_delete(struct rpma_conn **conn_ptr)
 }
 
 /*
- * rpma_conn_set_private_data -- rpma_conn_set_private_data() mock
+ * rpma_conn_transfer_private_data -- rpma_conn_transfer_private_data() mock
  */
-int
-rpma_conn_set_private_data(struct rpma_conn *conn,
+void
+rpma_conn_transfer_private_data(struct rpma_conn *conn,
 		struct rpma_conn_private_data *pdata)
 {
 	assert_non_null(conn);
@@ -75,6 +78,4 @@ rpma_conn_set_private_data(struct rpma_conn *conn,
 	check_expected(conn);
 	check_expected(pdata->ptr);
 	check_expected(pdata->len);
-
-	return mock_type(int);
 }

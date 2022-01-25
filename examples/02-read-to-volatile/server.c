@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BSD-3-Clause
-/* Copyright 2020, Intel Corporation */
+/* Copyright 2020-2021, Intel Corporation */
 
 /*
  * server.c -- a server of the read-to-volatile example
@@ -18,9 +18,12 @@
 
 #define HELLO_STR "Hello client!"
 
-#ifdef TEST_MOCK_MAIN
+#ifdef TEST_USE_CMOCKA
 #include "cmocka_headers.h"
 #include "cmocka_alloc.h"
+#endif
+
+#ifdef TEST_MOCK_MAIN
 #define main server_main
 #endif
 
@@ -85,7 +88,7 @@ main(int argc, char *argv[])
 	if (ret)
 		goto err_mr_dereg;
 
-	struct common_data data;
+	struct common_data data = {0};
 	data.mr_desc_size = mr_desc_size;
 
 	/* get the memory region's descriptor */
@@ -101,7 +104,7 @@ main(int argc, char *argv[])
 	 * Wait for an incoming connection request, accept it and wait for its
 	 * establishment.
 	 */
-	ret = server_accept_connection(ep, &pdata, &conn);
+	ret = server_accept_connection(ep, NULL, &pdata, &conn);
 	if (ret)
 		goto err_mr_dereg;
 

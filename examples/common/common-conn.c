@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BSD-3-Clause
-/* Copyright 2020, Intel Corporation */
+/* Copyright 2020-2021, Intel Corporation */
 
 /*
  * common-conn.c -- a common connection functions used by examples
@@ -32,8 +32,12 @@ malloc_aligned(size_t size)
 		return NULL;
 	}
 
+	/* zero the allocated memory */
+	memset(mem, 0, size);
+
 	return mem;
 }
+
 /*
  * common_peer_via_address -- create a new RPMA peer based on ibv_context
  * received by the provided address
@@ -58,14 +62,14 @@ common_peer_via_address(const char *addr, enum rpma_util_ibv_context_type type,
  */
 int
 client_connect(struct rpma_peer *peer, const char *addr, const char *port,
-		struct rpma_conn_private_data *pdata,
+		struct rpma_conn_cfg *cfg, struct rpma_conn_private_data *pdata,
 		struct rpma_conn **conn_ptr)
 {
 	struct rpma_conn_req *req = NULL;
 	enum rpma_conn_event conn_event = RPMA_CONN_UNDEFINED;
 
 	/* create a connection request */
-	int ret = rpma_conn_req_new(peer, addr, port, NULL, &req);
+	int ret = rpma_conn_req_new(peer, addr, port, cfg, &req);
 	if (ret)
 		return ret;
 
@@ -82,7 +86,9 @@ client_connect(struct rpma_peer *peer, const char *addr, const char *port,
 		goto err_conn_delete;
 	} else if (conn_event != RPMA_CONN_ESTABLISHED) {
 		fprintf(stderr,
-				"rpma_conn_next_event returned an unexptected event\n");
+			"rpma_conn_next_event returned an unexpected event: %s\n",
+			rpma_utils_conn_event_2str(conn_event));
+		ret = -1;
 		goto err_conn_delete;
 	}
 
@@ -99,7 +105,7 @@ err_conn_delete:
  * accept it and wait for its establishment
  */
 int
-server_accept_connection(struct rpma_ep *ep,
+server_accept_connection(struct rpma_ep *ep, struct rpma_conn_cfg *cfg,
 		struct rpma_conn_private_data *pdata,
 		struct rpma_conn **conn_ptr)
 {
@@ -107,7 +113,7 @@ server_accept_connection(struct rpma_ep *ep,
 	enum rpma_conn_event conn_event = RPMA_CONN_UNDEFINED;
 
 	/* receive an incoming connection request */
-	int ret = rpma_ep_next_conn_req(ep, NULL, &req);
+	int ret = rpma_ep_next_conn_req(ep, cfg, &req);
 	if (ret)
 		return ret;
 
@@ -125,7 +131,8 @@ server_accept_connection(struct rpma_ep *ep,
 	ret = rpma_conn_next_event(*conn_ptr, &conn_event);
 	if (!ret && conn_event != RPMA_CONN_ESTABLISHED) {
 		fprintf(stderr,
-				"rpma_conn_next_event returned an unexptected event\n");
+			"rpma_conn_next_event returned an unexpected event: %s\n",
+			rpma_utils_conn_event_2str(conn_event));
 		ret = -1;
 	}
 
@@ -148,7 +155,8 @@ common_wait_for_conn_close_verbose(struct rpma_conn *conn)
 	int ret = rpma_conn_next_event(conn, &conn_event);
 	if (!ret && conn_event != RPMA_CONN_CLOSED) {
 		fprintf(stderr,
-				"rpma_conn_next_event returned an unexptected event\n");
+			"rpma_conn_next_event returned an unexpected event: %s\n",
+			rpma_utils_conn_event_2str(conn_event));
 	}
 
 	return ret;

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
-/* Copyright 2020, Intel Corporation */
+/* Copyright 2020-2022, Intel Corporation */
+/* Copyright 2021, Fujitsu */
 
 /*
  * client.c -- a client of the flush-to-persistent example
@@ -11,29 +12,15 @@
 #include <inttypes.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include "common-conn.h"
+#include "hello.h"
 
 #ifdef USE_LIBPMEM
 #include <libpmem.h>
-#define USAGE_STR "usage: %s <server_address> <port> [<pmem-path>]\n"
+#define USAGE_STR "usage: %s <server_address> <port> [<pmem-path>]\n"PMEM_USAGE
 #else
 #define USAGE_STR "usage: %s <server_address> <port>\n"
 #endif /* USE_LIBPMEM */
-
-#include "common-conn.h"
-
-enum lang_t {en, es};
-
-static const char *hello_str[] = {
-	[en] = "Hello world!",
-	[es] = "¡Hola Mundo!"
-};
-
-#define LANG_NUM	(sizeof(hello_str) / sizeof(hello_str[0]))
-
-struct hello_t {
-	enum lang_t lang;
-	char str[KILOBYTE];
-};
 
 #define FLUSH_ID	(void *)0xF01D /* a random identifier */
 
@@ -91,11 +78,16 @@ main(int argc, char *argv[])
 		/* map the file */
 		mr_ptr = pmem_map_file(path, 0 /* len */, 0 /* flags */,
 				0 /* mode */, &mr_size, &is_pmem);
-		if (mr_ptr == NULL)
+		if (mr_ptr == NULL) {
+			(void) fprintf(stderr, "pmem_map_file() for %s "
+					"failed\n", path);
 			return -1;
+		}
 
 		/* pmem is expected */
 		if (!is_pmem) {
+			(void) fprintf(stderr, "%s is not an actual PMEM\n",
+				path);
 			(void) pmem_unmap(mr_ptr, mr_size);
 			return -1;
 		}
@@ -146,6 +138,7 @@ main(int argc, char *argv[])
 
 	/* if no pmem support or it is not provided */
 	if (mr_ptr == NULL) {
+		(void) fprintf(stderr, NO_PMEM_MSG);
 		mr_ptr = malloc_aligned(sizeof(struct hello_t));
 		if (mr_ptr == NULL)
 			return -1;
@@ -164,7 +157,7 @@ main(int argc, char *argv[])
 	struct rpma_peer *peer = NULL;
 	struct rpma_conn *conn = NULL;
 	bool direct_write_to_pmem = false;
-	enum rpma_flush_type flush_type = RPMA_FLUSH_TYPE_VISIBILITY;
+	enum rpma_flush_type flush_type;
 
 	/*
 	 * lookup an ibv_context via the address and create a new peer using it
@@ -174,7 +167,7 @@ main(int argc, char *argv[])
 		goto err_free;
 
 	/* establish a new connection to a server listening at addr:port */
-	ret = client_connect(peer, addr, port, NULL, &conn);
+	ret = client_connect(peer, addr, port, NULL, NULL, &conn);
 	if (ret)
 		goto err_peer_delete;
 
@@ -240,7 +233,8 @@ main(int argc, char *argv[])
 		printf("RPMA_FLUSH_TYPE_PERSISTENT is supported\n");
 		flush_type = RPMA_FLUSH_TYPE_PERSISTENT;
 	} else {
-		printf("RPMA_FLUSH_TYPE_PERSISTENT is NOT supported\n");
+		printf(
+			"RPMA_FLUSH_TYPE_PERSISTENT is NOT supported, RPMA_FLUSH_TYPE_VISIBILITY is used instead\n");
 		flush_type = RPMA_FLUSH_TYPE_VISIBILITY;
 	}
 
@@ -249,16 +243,23 @@ main(int argc, char *argv[])
 	if (ret)
 		goto err_mr_remote_delete;
 
-	/* wait for the completion to be ready */
-	ret = rpma_conn_completion_wait(conn);
+	/* get the connection's main CQ */
+	struct rpma_cq *cq = NULL;
+	ret = rpma_conn_get_cq(conn, &cq);
 	if (ret)
 		goto err_mr_remote_delete;
 
-	ret = rpma_conn_completion_get(conn, &cmpl);
+	/* wait for the completion to be ready */
+	ret = rpma_cq_wait(cq);
+	if (ret)
+		goto err_mr_remote_delete;
+
+	ret = rpma_cq_get_completion(cq, &cmpl);
 	if (ret)
 		goto err_mr_remote_delete;
 
 	if (cmpl.op_context != FLUSH_ID) {
+		ret = -1;
 		(void) fprintf(stderr,
 				"unexpected cmpl.op_context value "
 				"(0x%" PRIXPTR " != 0x%" PRIXPTR ")\n",
@@ -266,8 +267,12 @@ main(int argc, char *argv[])
 				(uintptr_t)FLUSH_ID);
 		goto err_mr_remote_delete;
 	}
-	if (cmpl.op_status != IBV_WC_SUCCESS)
+	if (cmpl.op_status != IBV_WC_SUCCESS) {
+		ret = -1;
+		(void) fprintf(stderr, "rpma_flush() failed: %s\n",
+				ibv_wc_status_str(cmpl.op_status));
 		goto err_mr_remote_delete;
+	}
 
 	/*
 	 * Translate the message so the next time the greeting will be

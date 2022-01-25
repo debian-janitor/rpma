@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 /* Copyright 2020, Intel Corporation */
+/* Copyright 2021, Fujitsu */
 
 /*
  * info-new.c -- unit tests of the info module
@@ -12,13 +13,20 @@
 #include <stdlib.h>
 
 #include "cmocka_headers.h"
+#include "test-common.h"
 #include "conn_req.h"
 #include "info.h"
 #include "librpma.h"
 #include "info-common.h"
 #include "mocks-rdma_cm.h"
+#include "mocks-string.h"
+#include "mocks-netdb.h"
 
 #include <infiniband/verbs.h>
+#include <netdb.h>
+
+static int rets[] = {EAI_SYSTEM, -1, MOCK_EAI_ERRNO};
+static int num_rets = sizeof(rets) / sizeof(rets[0]);
 
 /*
  * new__addr_NULL -- NULL addr is not valid
@@ -78,11 +86,11 @@ new__addr_port_info_ptr_NULL(void **unused)
 }
 
 /*
- * new__getaddrinfo_EAGAIN_ACTIVE -- rdma_getaddrinfo() fails with
- * EAGAIN when side == RPMA_INFO_ACTIVE
+ * new__getaddrinfo_ERRNO_ACTIVE -- rdma_getaddrinfo() fails with
+ * MOCK_ERRNO when side == RPMA_INFO_ACTIVE
  */
 static void
-new__getaddrinfo_EAGAIN_ACTIVE(void **unused)
+new__getaddrinfo_ERRNO_ACTIVE(void **unused)
 {
 	/*
 	 * configure mocks:
@@ -90,27 +98,38 @@ new__getaddrinfo_EAGAIN_ACTIVE(void **unused)
 	 * rdma_getaddrinfo() has failed.
 	 */
 	struct rdma_addrinfo_args get_args = {MOCK_VALIDATE, NULL};
-	will_return(rdma_getaddrinfo, &get_args);
-	expect_value(rdma_getaddrinfo, hints->ai_flags, 0);
-	will_return(rdma_getaddrinfo, EAGAIN);
 	will_return_maybe(__wrap__test_malloc, MOCK_OK);
+	for (int i = 0; i < num_rets; i++) {
+		will_return(rdma_getaddrinfo, &get_args);
+		expect_value(rdma_getaddrinfo, hints->ai_flags, 0);
+		will_return(rdma_getaddrinfo, rets[i]);
+		will_return(rdma_getaddrinfo, MOCK_ERRNO);
+		if (rets[i] == -1 || rets[i] == EAI_SYSTEM) {
+			expect_value(__wrap_strerror, errnum, MOCK_ERRNO);
+			will_return(__wrap_strerror, MOCK_ERROR);
+		} else {
+			expect_value(__wrap_gai_strerror, errcode,
+				MOCK_EAI_ERRNO);
+			will_return(__wrap_gai_strerror, MOCK_EAI_ERROR);
+		}
 
-	/* run test */
-	struct rpma_info *info = NULL;
-	int ret = rpma_info_new(MOCK_ADDR, MOCK_PORT, RPMA_INFO_ACTIVE,
-			&info);
+		/* run test */
+		struct rpma_info *info = NULL;
+		int ret = rpma_info_new(MOCK_IP_ADDRESS, MOCK_PORT,
+				RPMA_INFO_ACTIVE, &info);
 
-	/* verify the results */
-	assert_int_equal(ret, RPMA_E_PROVIDER);
-	assert_null(info);
+		/* verify the results */
+		assert_int_equal(ret, RPMA_E_PROVIDER);
+		assert_null(info);
+	}
 }
 
 /*
- * new__getaddrinfo_EAGAIN_PASSIVE -- rdma_getaddrinfo() fails with
- * EAGAIN when side == RPMA_INFO_PASSIVE
+ * new__getaddrinfo_ERRNO_PASSIVE -- rdma_getaddrinfo() fails with
+ * MOCK_ERRNO when side == RPMA_INFO_PASSIVE
  */
 static void
-new__getaddrinfo_EAGAIN_PASSIVE(void **unused)
+new__getaddrinfo_ERRNO_PASSIVE(void **unused)
 {
 	/*
 	 * configure mocks:
@@ -118,37 +137,48 @@ new__getaddrinfo_EAGAIN_PASSIVE(void **unused)
 	 * rdma_getaddrinfo() has failed.
 	 */
 	struct rdma_addrinfo_args get_args = {MOCK_VALIDATE, NULL};
-	will_return(rdma_getaddrinfo, &get_args);
-	expect_value(rdma_getaddrinfo, hints->ai_flags, RAI_PASSIVE);
-	will_return(rdma_getaddrinfo, EAGAIN);
 	will_return_maybe(__wrap__test_malloc, MOCK_OK);
+	for (int i = 0; i < num_rets; i++) {
+		will_return(rdma_getaddrinfo, &get_args);
+		expect_value(rdma_getaddrinfo, hints->ai_flags, RAI_PASSIVE);
+		will_return(rdma_getaddrinfo, rets[i]);
+		will_return(rdma_getaddrinfo, MOCK_ERRNO);
+		if (rets[i] == -1 || rets[i] == EAI_SYSTEM) {
+			expect_value(__wrap_strerror, errnum, MOCK_ERRNO);
+			will_return(__wrap_strerror, MOCK_ERROR);
+		} else {
+			expect_value(__wrap_gai_strerror, errcode,
+				MOCK_EAI_ERRNO);
+			will_return(__wrap_gai_strerror, MOCK_EAI_ERROR);
+		}
 
-	/* run test */
-	struct rpma_info *info = NULL;
-	int ret = rpma_info_new(MOCK_ADDR, MOCK_PORT, RPMA_INFO_PASSIVE,
-			&info);
+		/* run test */
+		struct rpma_info *info = NULL;
+		int ret = rpma_info_new(MOCK_IP_ADDRESS, MOCK_PORT,
+				RPMA_INFO_PASSIVE, &info);
 
-	/* verify the results */
-	assert_int_equal(ret, RPMA_E_PROVIDER);
-	assert_null(info);
+		/* verify the results */
+		assert_int_equal(ret, RPMA_E_PROVIDER);
+		assert_null(info);
+	}
 }
 
 /*
- * new__malloc_ENOMEM -- malloc() fail with ENOMEM
+ * new__malloc_ERRNO -- malloc() fails with MOCK_ERRNO
  */
 static void
-new__malloc_ENOMEM(void **unused)
+new__malloc_ERRNO(void **unused)
 {
 	/* configure mocks */
 	struct rdma_addrinfo rai = {0};
 	struct rdma_addrinfo_args args = {MOCK_PASSTHROUGH, &rai};
 	will_return_maybe(rdma_getaddrinfo, &args);
 	will_return_maybe(rdma_freeaddrinfo, &args);
-	will_return(__wrap__test_malloc, ENOMEM);
+	will_return(__wrap__test_malloc, MOCK_ERRNO);
 
 	/* run test */
 	struct rpma_info *info = NULL;
-	int ret = rpma_info_new(MOCK_ADDR, MOCK_PORT, RPMA_INFO_PASSIVE,
+	int ret = rpma_info_new(MOCK_IP_ADDRESS, MOCK_PORT, RPMA_INFO_PASSIVE,
 			&info);
 
 	/* verify the results */
@@ -175,7 +205,7 @@ new__lifecycle(void **unused)
 
 	/* run test - step 1 */
 	struct rpma_info *info = NULL;
-	int ret = rpma_info_new(MOCK_ADDR, MOCK_PORT, RPMA_INFO_PASSIVE,
+	int ret = rpma_info_new(MOCK_IP_ADDRESS, MOCK_PORT, RPMA_INFO_PASSIVE,
 			&info);
 
 	/* verify the results */
@@ -243,9 +273,9 @@ main(int argc, char *argv[])
 		cmocka_unit_test(new__addr_NULL),
 		cmocka_unit_test(new__info_ptr_NULL),
 		cmocka_unit_test(new__addr_port_info_ptr_NULL),
-		cmocka_unit_test(new__getaddrinfo_EAGAIN_ACTIVE),
-		cmocka_unit_test(new__getaddrinfo_EAGAIN_PASSIVE),
-		cmocka_unit_test(new__malloc_ENOMEM),
+		cmocka_unit_test(new__getaddrinfo_ERRNO_ACTIVE),
+		cmocka_unit_test(new__getaddrinfo_ERRNO_PASSIVE),
+		cmocka_unit_test(new__malloc_ERRNO),
 
 		/* rpma_info_delete() unit tests */
 		cmocka_unit_test(delete__info_ptr_NULL),

@@ -1,14 +1,12 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
-# Copyright 2016-2020, Intel Corporation
+# Copyright 2016-2021, Intel Corporation
 #
 
 #
 # Dockerfile - a 'recipe' for Docker to build an image of fedora-based
-#              environment prepared for running rpma tests.
+#              environment prepared for running tests of librpma.
 #
-
-# Add or remove this comment just to force the image rebuild
 
 # Pull base image
 FROM fedora:31
@@ -32,6 +30,22 @@ ENV EXAMPLES_DEPS "\
 	libpmem-devel \
 	protobuf-c-devel"
 
+ENV TOOLS_DEPS "\
+	python3-jinja2"
+
+ENV TESTS_DEPS "\
+	pylint \
+	python3-pip \
+	python3-pytest"
+
+ENV PYTHON_DEPS "\
+	deepdiff \
+	markdown2 \
+	matplotlib \
+	pandas \
+	paramiko \
+	scp"
+
 # RPMA deps
 ENV RPMA_DEPS "\
 	cmake \
@@ -42,7 +56,6 @@ ENV RPMA_DEPS "\
 	libunwind-devel \
 	pandoc \
 	rdma-core-devel"
-#	txt2man is installed from git repo now
 
 # doc update deps
 ENV DOC_UPDATE_DEPS "\
@@ -52,9 +65,13 @@ ENV DOC_UPDATE_DEPS "\
 RUN dnf install -y \
 	$BASE_DEPS \
 	$EXAMPLES_DEPS \
+	$TOOLS_DEPS \
+	$TESTS_DEPS \
 	$RPMA_DEPS \
 	$DOC_UPDATE_DEPS \
 && dnf clean all
+
+RUN pip3 install --upgrade pip
 
 # Install cmocka
 COPY install-cmocka.sh install-cmocka.sh
@@ -66,7 +83,7 @@ RUN ./install-txt2man.sh
 
 # Add user
 ENV USER user
-ENV USERPASS pass
+ENV USERPASS p1a2s3s4
 RUN useradd -m $USER
 RUN echo "$USER:$USERPASS" | chpasswd
 RUN gpasswd wheel -a $USER
@@ -78,3 +95,5 @@ ENV OS_VER 31
 ENV PACKAGE_MANAGER rpm
 ENV NOTTY 1
 
+# install python modules for the default user
+RUN pip3 install --user $PYTHON_DEPS

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 /* Copyright 2020, Intel Corporation */
+/* Copyright 2021, Fujitsu */
 
 /*
  * mr-descriptor.c -- the memory region serialization unit tests
@@ -40,9 +41,10 @@ get_descriptor_size__mr_NULL(void **unused)
  * get_descriptor_size__desc_size_NULL - NULL desc_size is invalid
  */
 static void
-get_descriptor_size__desc_size_NULL(void **mr_ptr)
+get_descriptor_size__desc_size_NULL(void **pprestate)
 {
-	struct rpma_mr_local *mr = *mr_ptr;
+	struct prestate *prestate = *pprestate;
+	struct rpma_mr_local *mr = prestate->mr;
 
 	/* run test */
 	int ret = rpma_mr_get_descriptor_size(mr, NULL);
@@ -69,9 +71,10 @@ get_descriptor_size__mr_desc_size_NULL(void **unused)
  * get_descriptor_size__success - happy day scenario
  */
 static void
-get_descriptor_size__success(void **mr_ptr)
+get_descriptor_size__success(void **pprestate)
 {
-	struct rpma_mr_local *mr = *mr_ptr;
+	struct prestate *prestate = *pprestate;
+	struct rpma_mr_local *mr = prestate->mr;
 	size_t desc_size;
 
 	/* run test */
@@ -101,9 +104,10 @@ get_descriptor__mr_NULL(void **unused)
  * get_descriptor__desc_NULL - NULL desc is invalid
  */
 static void
-get_descriptor__desc_NULL(void **mr_ptr)
+get_descriptor__desc_NULL(void **pprestate)
 {
-	struct rpma_mr_local *mr = *mr_ptr;
+	struct prestate *prestate = *pprestate;
+	struct rpma_mr_local *mr = prestate->mr;
 
 	/* run test */
 	int ret = rpma_mr_get_descriptor(mr, NULL);
@@ -186,13 +190,13 @@ remote_from_descriptor__invalid_desc_size(void **unused)
 }
 
 /*
- * remote_from_descriptor__malloc_ENOMEM - malloc() fail with ENOMEM
+ * remote_from_descriptor__malloc_ERRNO - malloc() fails with MOCK_ERRNO
  */
 static void
-remote_from_descriptor__malloc_ENOMEM(void **unused)
+remote_from_descriptor__malloc_ERRNO(void **unused)
 {
 	/* configure mock */
-	will_return_maybe(__wrap__test_malloc, ENOMEM);
+	will_return(__wrap__test_malloc, MOCK_ERRNO);
 
 	/* run test */
 	struct rpma_mr_remote *mr = NULL;
@@ -459,7 +463,7 @@ static const struct CMUnitTest tests_descriptor[] = {
 	cmocka_unit_test(
 		remote_from_descriptor__mr_ptr_NULL_desc_NULL),
 	cmocka_unit_test(remote_from_descriptor__invalid_desc_size),
-	cmocka_unit_test(remote_from_descriptor__malloc_ENOMEM),
+	cmocka_unit_test(remote_from_descriptor__malloc_ERRNO),
 	cmocka_unit_test(remote_from_descriptor__buff_usage_equal_zero),
 
 	/* rpma_mr_remote_delete() unit test */

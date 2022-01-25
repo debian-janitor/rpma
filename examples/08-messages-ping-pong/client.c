@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
-/* Copyright 2020, Intel Corporation */
+/* Copyright 2020-2021, Intel Corporation */
+/* Copyright 2021, Fujitsu */
 
 /*
  * client.c -- a client of the messages-ping-pong example
@@ -90,8 +91,13 @@ main(int argc, char *argv[])
 	}
 
 	/* establish a new connection to a server listening at addr:port */
-	if ((ret = client_connect(peer, addr, port, NULL, &conn)))
+	if ((ret = client_connect(peer, addr, port, NULL, NULL, &conn)))
 		goto err_mr_dereg;
+
+	/* get the connection's main CQ */
+	struct rpma_cq *cq = NULL;
+	if ((ret = rpma_conn_get_cq(conn, &cq)))
+		goto err_conn_disconnect;
 
 	while (--rounds) {
 		/* prepare a receive for the server's response */
@@ -114,15 +120,25 @@ main(int argc, char *argv[])
 
 		do {
 			/* prepare completions, get one and validate it */
-			if ((ret = rpma_conn_completion_wait(conn))) {
+			ret = rpma_cq_get_completion(cq, &cmpl);
+			if (ret && ret != RPMA_E_NO_COMPLETION)
 				break;
-			} else if ((ret = rpma_conn_completion_get(conn,
-					&cmpl))) {
-				break;
-			} else if (cmpl.op_status != IBV_WC_SUCCESS) {
 
+			if (ret == RPMA_E_NO_COMPLETION) {
+				if ((ret = rpma_cq_wait(cq))) {
+					break;
+				} else if ((ret = rpma_cq_get_completion(cq,
+						&cmpl))) {
+					if (ret == RPMA_E_NO_COMPLETION)
+						continue;
+					break;
+				}
+			}
+
+			if (cmpl.op_status != IBV_WC_SUCCESS) {
 				(void) fprintf(stderr,
-					"Shutting down the client due to the unsuccessful completion of an operation.\n");
+					"rpma_send()/rpma_recv() failed: %s\n",
+					ibv_wc_status_str(cmpl.op_status));
 				ret = -1;
 				break;
 			}
@@ -136,7 +152,7 @@ main(int argc, char *argv[])
 						"received completion is not as expected (%p != %p [cmpl.op_context] || %"
 						PRIu32
 						" != %ld [cmpl.byte_len] )\n",
-						cmpl.op_context, recv,
+						cmpl.op_context, (void *)recv,
 						cmpl.byte_len, MSG_SIZE);
 					ret = -1;
 					break;
@@ -163,6 +179,7 @@ main(int argc, char *argv[])
 	ret |= rpma_send(conn, send_mr, 0, MSG_SIZE, RPMA_F_COMPLETION_ON_ERROR,
 			NULL);
 
+err_conn_disconnect:
 	ret |= common_disconnect_and_wait_for_conn_close(&conn);
 
 err_mr_dereg:

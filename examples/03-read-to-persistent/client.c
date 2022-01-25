@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BSD-3-Clause
-/* Copyright 2020, Intel Corporation */
+/* Copyright 2020-2022, Intel Corporation */
 
 /*
  * client.c -- a client of the read-to-persistent example
@@ -10,29 +10,15 @@
 #include <librpma.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include "common-conn.h"
+#include "hello.h"
 
 #ifdef USE_LIBPMEM
 #include <libpmem.h>
-#define USAGE_STR "usage: %s <server_address> <port> [<pmem-path>]\n"
+#define USAGE_STR "usage: %s <server_address> <port> [<pmem-path>]\n"PMEM_USAGE
 #else
 #define USAGE_STR "usage: %s <server_address> <port>\n"
 #endif /* USE_LIBPMEM */
-
-#include "common-conn.h"
-
-enum lang_t {en, es};
-
-static const char *hello_str[] = {
-	[en] = "Hello world!",
-	[es] = "¡Hola Mundo!"
-};
-
-#define LANG_NUM	(sizeof(hello_str) / sizeof(hello_str[0]))
-
-struct hello_t {
-	enum lang_t lang;
-	char str[KILOBYTE];
-};
 
 static inline void
 write_hello_str(struct hello_t *hello, enum lang_t lang)
@@ -83,11 +69,16 @@ main(int argc, char *argv[])
 		/* map the file */
 		mr_ptr = pmem_map_file(path, 0 /* len */, 0 /* flags */,
 				0 /* mode */, &mr_size, &is_pmem);
-		if (mr_ptr == NULL)
+		if (mr_ptr == NULL) {
+			(void) fprintf(stderr, "pmem_map_file() for %s "
+					"failed\n", path);
 			return -1;
+		}
 
 		/* pmem is expected */
 		if (!is_pmem) {
+			(void) fprintf(stderr, "%s is not an actual PMEM\n",
+				path);
 			(void) pmem_unmap(mr_ptr, mr_size);
 			return -1;
 		}
@@ -138,6 +129,7 @@ main(int argc, char *argv[])
 
 	/* if no pmem support or it is not provided */
 	if (mr_ptr == NULL) {
+		(void) fprintf(stderr, NO_PMEM_MSG);
 		mr_ptr = malloc_aligned(sizeof(struct hello_t));
 		if (mr_ptr == NULL)
 			return -1;
@@ -174,7 +166,7 @@ main(int argc, char *argv[])
 		goto err_mr_dereg;
 
 	/* calculate data for the server read */
-	struct common_data data;
+	struct common_data data = {0};
 	data.data_offset = data_offset + offsetof(struct hello_t, str);
 	data.mr_desc_size = mr_desc_size;
 
@@ -187,7 +179,7 @@ main(int argc, char *argv[])
 	struct rpma_conn_private_data pdata;
 	pdata.ptr = &data;
 	pdata.len = sizeof(struct common_data);
-	ret = client_connect(peer, addr, port, &pdata, &conn);
+	ret = client_connect(peer, addr, port, NULL, &pdata, &conn);
 	if (ret)
 		goto err_mr_dereg;
 

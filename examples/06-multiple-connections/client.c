@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BSD-3-Clause
-/* Copyright 2020, Intel Corporation */
+/* Copyright 2020-2021, Intel Corporation */
 
 /*
  * client.c -- a client of the multiple-connections example
@@ -102,7 +102,7 @@ main(int argc, char *argv[])
 	if (ret)
 		goto err_mr_dereg;
 
-	struct common_data data;
+	struct common_data data = {0};
 	data.mr_desc_size = mr_desc_size;
 
 	/* get the memory region's descriptor */
@@ -115,7 +115,7 @@ main(int argc, char *argv[])
 	pdata.len = sizeof(struct common_data);
 
 	/* establish a new connection to a server listening at addr:port */
-	ret = client_connect(peer, addr, port, &pdata, &conn);
+	ret = client_connect(peer, addr, port, NULL, &pdata, &conn);
 	if (ret)
 		goto err_mr_dereg;
 

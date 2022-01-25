@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
-/* Copyright 2020, Intel Corporation */
+/* Copyright 2020-2021, Intel Corporation */
+/* Copyright 2021, Fujitsu */
 
 /*
  * conn-common.c -- the connection unit tests common functions
@@ -13,6 +14,14 @@
 
 const char Private_data[] = "Random data";
 const char Private_data_2[] = "Another random data";
+
+struct conn_test_state Conn_without_rcq = {
+	.rcq = NULL
+};
+
+struct conn_test_state Conn_with_rcq = {
+	.rcq = MOCK_RPMA_RCQ
+};
 
 /*
  * rpma_private_data_store -- rpma_private_data_store() mock
@@ -42,35 +51,6 @@ rpma_private_data_store(struct rdma_cm_event *edata,
 }
 
 /*
- * rpma_private_data_copy -- rpma_private_data_copy() mock
- */
-int
-rpma_private_data_copy(struct rpma_conn_private_data *dst,
-		struct rpma_conn_private_data *src)
-{
-	assert_non_null(src);
-	assert_non_null(dst);
-	assert_null(dst->ptr);
-	assert_int_equal(dst->len, 0);
-	assert_true((src->ptr == NULL && src->len == 0) ||
-			(src->ptr != NULL && src->len != 0));
-
-	dst->len = 0;
-
-	int ret = mock_type(int);
-	if (ret) {
-		dst->ptr = NULL;
-		return ret;
-	}
-
-	dst->ptr = mock_type(void *);
-	if (dst->ptr)
-		dst->len = strlen(dst->ptr) + 1;
-
-	return 0;
-}
-
-/*
  * rpma_private_data_discard -- rpma_private_data_discard() mock
  */
 void
@@ -89,14 +69,16 @@ rpma_private_data_discard(struct rpma_conn_private_data *pdata)
 int
 setup__conn_new(void **cstate_ptr)
 {
-	static struct conn_test_state cstate;
-	cstate.conn = NULL;
-	cstate.data.ptr = NULL;
-	cstate.data.len = 0;
+	/* the default is Conn_without_rcq */
+	struct conn_test_state *cstate = *cstate_ptr ? *cstate_ptr :
+			&Conn_without_rcq;
+	cstate->conn = NULL;
+	cstate->data.ptr = NULL;
+	cstate->data.len = 0;
 
 	Ibv_cq.channel = MOCK_COMP_CHANNEL;
 
-	/* configure mock: */
+	/* configure mock */
 	will_return(rdma_create_event_channel, MOCK_EVCH);
 	Rdma_migrate_id_counter = RDMA_MIGRATE_COUNTER_INIT;
 	will_return(rdma_migrate_id, MOCK_OK);
@@ -105,13 +87,13 @@ setup__conn_new(void **cstate_ptr)
 
 	/* prepare an object */
 	int ret = rpma_conn_new(MOCK_PEER, MOCK_CM_ID,
-			MOCK_IBV_CQ, &cstate.conn);
+			MOCK_RPMA_CQ, cstate->rcq, &cstate->conn);
 
 	/* verify the results */
 	assert_int_equal(ret, MOCK_OK);
-	assert_non_null(cstate.conn);
+	assert_non_null(cstate->conn);
 
-	*cstate_ptr = &cstate;
+	*cstate_ptr = cstate;
 
 	return 0;
 }
@@ -127,12 +109,16 @@ teardown__conn_delete(void **cstate_ptr)
 	/* configure mocks: */
 	will_return(rpma_flush_delete, MOCK_OK);
 	expect_value(rdma_destroy_qp, id, MOCK_CM_ID);
-	will_return(ibv_destroy_cq, MOCK_OK);
-	will_return(ibv_destroy_comp_channel, MOCK_OK);
+	expect_value(rpma_cq_delete, *cq_ptr, cstate->rcq);
+	will_return(rpma_cq_delete, MOCK_OK);
+	expect_value(rpma_cq_delete, *cq_ptr, MOCK_RPMA_CQ);
+	will_return(rpma_cq_delete, MOCK_OK);
 	expect_value(rdma_destroy_id, id, MOCK_CM_ID);
 	will_return(rdma_destroy_id, MOCK_OK);
-	expect_value(rpma_private_data_discard, pdata->ptr, cstate->data.ptr);
-	expect_value(rpma_private_data_discard, pdata->len, cstate->data.len);
+	expect_value(rpma_private_data_discard, pdata->ptr,
+				cstate->data.ptr);
+	expect_value(rpma_private_data_discard, pdata->len,
+				cstate->data.len);
 
 	/* delete the object */
 	int ret = rpma_conn_delete(&cstate->conn);

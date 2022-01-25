@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: BSD-3-Clause */
-/* Copyright 2020, Intel Corporation */
+/* Copyright 2020-2022, Intel Corporation */
 
 /*
  * common-conn.h -- a common connection functions declarations for examples
@@ -13,10 +13,19 @@
 
 #ifdef USE_LIBPMEM
 
+#define PMEM_USAGE \
+"where <pmem-path> can be:\n\
+  - a Device DAX (/dev/dax0.0 for example) or\n\
+  - a file on File System DAX (/mnt/pmem/file for example)\n"
 /* signature marking the persistent contents as valid */
 #define SIGNATURE_STR "RPMA_EXAMPLE_SIG"
 #define SIGNATURE_LEN (strlen(SIGNATURE_STR) + 1)
 
+#define NO_PMEM_MSG "No <pmem-path> provided. Using DRAM instead.\n"
+#else
+#define PMEM_USAGE ""
+#define NO_PMEM_MSG \
+	"The example is unable to use libpmem. If unintended please check the build log. Using DRAM instead.\n"
 #endif
 
 /*
@@ -51,11 +60,11 @@ int common_peer_via_address(const char *addr,
 		common_peer_via_address(addr, RPMA_UTIL_IBV_CONTEXT_LOCAL, \
 				peer_ptr)
 
-int client_connect(struct rpma_peer *peer, const char *addr,
-		const char *port, struct rpma_conn_private_data *pdata,
+int client_connect(struct rpma_peer *peer, const char *addr, const char *port,
+		struct rpma_conn_cfg *cfg, struct rpma_conn_private_data *pdata,
 		struct rpma_conn **conn_ptr);
 
-int server_accept_connection(struct rpma_ep *ep,
+int server_accept_connection(struct rpma_ep *ep, struct rpma_conn_cfg *cfg,
 		struct rpma_conn_private_data *pdata,
 		struct rpma_conn **conn_ptr);
 

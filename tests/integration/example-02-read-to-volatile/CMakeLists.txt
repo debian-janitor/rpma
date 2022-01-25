@@ -1,6 +1,7 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
-# Copyright 2020, Intel Corporation
+# Copyright 2020-2021, Intel Corporation
+# Copyright 2021, Fujitsu
 #
 
 include(../../cmake/ctest_helpers.cmake)
@@ -16,6 +17,7 @@ build_test_src(NAME ${TARGET} SRCS
 	${LIBRPMA_SOURCE_DIR}/conn.c
 	${LIBRPMA_SOURCE_DIR}/conn_cfg.c
 	${LIBRPMA_SOURCE_DIR}/conn_req.c
+	${LIBRPMA_SOURCE_DIR}/cq.c
 	${LIBRPMA_SOURCE_DIR}/flush.c
 	${LIBRPMA_SOURCE_DIR}/ep.c
 	${LIBRPMA_SOURCE_DIR}/info.c
@@ -35,9 +37,10 @@ target_include_directories(${TARGET} PRIVATE
 
 set_target_properties(${TARGET}
        PROPERTIES
-       LINK_FLAGS "-Wl,--wrap=_test_malloc,--wrap=posix_memalign,--wrap=fprintf")
+       LINK_FLAGS "-Wl,--wrap=_test_malloc,--wrap=posix_memalign,--wrap=fprintf,--wrap=mmap,--wrap=munmap")
 
 target_compile_definitions(${TARGET}
+       PUBLIC TEST_USE_CMOCKA
        PUBLIC TEST_MOCK_MAIN
        PRIVATE TEST_MOCK_ALLOC
        PRIVATE SRCVERSION="0.0")

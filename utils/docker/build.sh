@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # SPDX-License-Identifier: BSD-3-Clause
-# Copyright 2017-2020, Intel Corporation
+# Copyright 2017-2021, Intel Corporation
 #
 
 #
@@ -14,7 +14,7 @@
 #   where the root of this project is on the host machine,
 # - set variables 'OS' and 'OS_VER' properly to a system you want to build this
 #   repo on (for proper values take a look on the list of Dockerfiles at the
-#   utils/docker/images directory), eg. OS=ubuntu, OS_VER=16.04.
+#   utils/docker/images directory), eg. OS=ubuntu, OS_VER=20.04.
 #
 
 set -e
@@ -32,19 +32,17 @@ if [[ -z "$HOST_WORKDIR" ]]; then
 	HOST_WORKDIR=$(readlink -f ../..)
 fi
 
-if [[ "$CI_EVENT_TYPE" == "cron" || "$CI_BRANCH" == "coverity_scan" ]]; then
-	if [[ "$TYPE" != "coverity" ]]; then
-		echo "Skipping non-Coverity job for cron/Coverity build"
-		exit 0
-	fi
-else
-	if [[ "$TYPE" == "coverity" ]]; then
-		echo "Skipping Coverity job for non cron/Coverity build"
-		exit 0
-	fi
+if [[ "$TYPE" == "coverity" && "$CI_EVENT_TYPE" != "cron" && "$CI_BRANCH" != "coverity_scan" ]]; then
+	echo "Skipping Coverity job for non cron/Coverity build"
+	exit 0
 fi
 
-imageName=${DOCKERHUB_REPO}:0.1-${OS}-${OS_VER}
+if [[ "$CI_BRANCH" == "coverity_scan" && "$TYPE" != "coverity" ]]; then
+	echo "Skipping non-Coverity job for cron/Coverity build"
+	exit 0
+fi
+
+imageName=${DOCKER_REPO}:${IMG_VER}-${OS}-${OS_VER}
 containerName=rpma-${OS}-${OS_VER}
 
 if [[ "$command" == "" ]]; then
@@ -78,7 +76,7 @@ SCRIPTSDIR=$WORKDIR/utils/docker
 # do not allocate a pseudo-TTY if we are running on GitHub Actions
 [ ! $GITHUB_ACTIONS ] && TTY='-t' || TTY=''
 
-echo Building 0.1-${OS}-${OS_VER}
+echo Building ${IMG_VER}-${OS}-${OS_VER}
 
 # Run a container with
 #  - environment variables set (--env)
@@ -106,6 +104,7 @@ docker run --privileged=true --name=$containerName -i $TTY \
 	--env CI_BRANCH=$CI_BRANCH \
 	--env CI_EVENT_TYPE=$CI_EVENT_TYPE \
 	--env CI_RUN=$CI_RUN \
+	--env CI_SANITS=$CI_SANITS \
 	--env TRAVIS=$TRAVIS \
 	--env COVERITY_SCAN_TOKEN=$COVERITY_SCAN_TOKEN \
 	--env COVERITY_SCAN_NOTIFICATION_EMAIL=$COVERITY_SCAN_NOTIFICATION_EMAIL \
@@ -113,6 +112,7 @@ docker run --privileged=true --name=$containerName -i $TTY \
 	--env TEST_BUILD=$TEST_BUILD \
 	--env DEFAULT_TEST_DIR=/dev/shm \
 	--env TEST_PACKAGES=${TEST_PACKAGES:-ON} \
+	--env TEST_PYTHON_TOOLS=${TEST_PYTHON_TOOLS:-ON} \
 	--env CHECK_CSTYLE=${CHECK_CSTYLE:-ON} \
 	--env FAULT_INJECTION=$FAULT_INJECTION \
 	--env CC=${CC:-gcc} \

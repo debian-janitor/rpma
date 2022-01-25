@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
-/* Copyright 2020, Intel Corporation */
+/* Copyright 2020-2021, Intel Corporation */
+/* Copyright 2021, Fujitsu */
 
 /*
  * peer.c -- librpma peer-related implementations
@@ -32,6 +33,54 @@ struct rpma_peer {
 /* internal librpma API */
 
 /*
+ * rpma_peer_usage_to_access -- convert usage to access
+ *
+ * Note: APM type of flush requires the same access as RPMA_MR_USAGE_READ_SRC
+ */
+static int
+rpma_peer_usage_to_access(struct rpma_peer *peer, int usage)
+{
+	enum ibv_transport_type type =
+			peer->pd->context->device->transport_type;
+	int access = 0;
+
+	if (usage & (RPMA_MR_USAGE_READ_SRC |\
+			RPMA_MR_USAGE_FLUSH_TYPE_VISIBILITY |\
+			RPMA_MR_USAGE_FLUSH_TYPE_PERSISTENT))
+		access |= IBV_ACCESS_REMOTE_READ;
+
+	if (usage & RPMA_MR_USAGE_READ_DST) {
+		access |= IBV_ACCESS_LOCAL_WRITE;
+
+		/*
+		 * iWARP implements the READ operation as the WRITE operation
+		 * in the opposite direction.
+		 */
+		if (type == IBV_TRANSPORT_IWARP)
+			access |= IBV_ACCESS_REMOTE_WRITE;
+	}
+
+	if (usage & RPMA_MR_USAGE_WRITE_SRC)
+		access |= IBV_ACCESS_LOCAL_WRITE;
+
+	if (usage & RPMA_MR_USAGE_WRITE_DST)
+		/*
+		 * If IBV_ACCESS_REMOTE_WRITE is set, then
+		 * IBV_ACCESS_LOCAL_WRITE must be set too.
+		 */
+		access |= IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_LOCAL_WRITE;
+
+	if (usage & RPMA_MR_USAGE_RECV)
+		access |= IBV_ACCESS_LOCAL_WRITE;
+
+	/*
+	 * There is no IBV_ACCESS_* value to be set for RPMA_MR_USAGE_SEND.
+	 */
+
+	return access;
+}
+
+/*
  * rpma_peer_create_qp -- allocate a QP associated with the CM ID
  *
  * ASSUMPTIONS
@@ -39,7 +88,8 @@ struct rpma_peer {
  */
 int
 rpma_peer_create_qp(struct rpma_peer *peer, struct rdma_cm_id *id,
-		struct ibv_cq *cq, const struct rpma_conn_cfg *cfg)
+		struct rpma_cq *cq, struct rpma_cq *rcq,
+		const struct rpma_conn_cfg *cfg)
 {
 	if (peer == NULL || id == NULL || cq == NULL)
 		return RPMA_E_INVAL;
@@ -50,10 +100,12 @@ rpma_peer_create_qp(struct rpma_peer *peer, struct rdma_cm_id *id,
 	(void) rpma_conn_cfg_get_sq_size(cfg, &sq_size);
 	(void) rpma_conn_cfg_get_rq_size(cfg, &rq_size);
 
+	struct ibv_cq *ibv_cq = rpma_cq_get_ibv_cq(cq);
+
 	struct ibv_qp_init_attr qp_init_attr;
 	qp_init_attr.qp_context = NULL;
-	qp_init_attr.send_cq = cq;
-	qp_init_attr.recv_cq = cq;
+	qp_init_attr.send_cq = ibv_cq;
+	qp_init_attr.recv_cq = rcq ? rpma_cq_get_ibv_cq(rcq) : ibv_cq;
 	qp_init_attr.srq = NULL;
 	qp_init_attr.cap.max_send_wr = sq_size;
 	qp_init_attr.cap.max_recv_wr = rq_size;
@@ -108,8 +160,10 @@ rpma_peer_create_qp(struct rpma_peer *peer, struct rdma_cm_id *id,
  */
 int
 rpma_peer_mr_reg(struct rpma_peer *peer, struct ibv_mr **ibv_mr_ptr,
-		void *addr, size_t length, int access)
+		void *addr, size_t length, int usage)
 {
+	int access = rpma_peer_usage_to_access(peer, usage);
+
 	*ibv_mr_ptr = ibv_reg_mr(peer->pd, addr, length,
 					RPMA_IBV_ACCESS(access));
 	if (*ibv_mr_ptr != NULL)
@@ -139,7 +193,7 @@ rpma_peer_mr_reg(struct rpma_peer *peer, struct ibv_mr **ibv_mr_ptr,
 	if (*ibv_mr_ptr == NULL) {
 		RPMA_LOG_ERROR_WITH_ERRNO(errno,
 			"Memory registration with On-Demand Paging (maybe FSDAX?) support failed: "
-			"ibv_reg_mr(addr=%p, length=%zu, acccess=%i|IBV_ACCESS_ON_DEMAND)",
+			"ibv_reg_mr(addr=%p, length=%zu, access=%i|IBV_ACCESS_ON_DEMAND)",
 			addr, length, access);
 		return RPMA_E_PROVIDER;
 	}

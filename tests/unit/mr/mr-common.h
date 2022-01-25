@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: BSD-3-Clause */
-/* Copyright 2020, Intel Corporation */
+/* Copyright 2020-2021, Intel Corporation */
 
 /*
  * mr-common.h -- the memory region unit tests's common definitions
@@ -34,14 +34,24 @@
 
 #define MOCK_FLUSH_TYPE RPMA_MR_USAGE_FLUSH_TYPE_PERSISTENT
 
-#define MR_DESC_SIZE	21 /* sizeof(DESC_EXP_PMEM) */
+#define MR_DESC_SIZE		21 /* sizeof(DESC_EXP_PMEM) */
 #define INVALID_MR_DESC_SIZE	1
 
 #define MOCK_DST_OFFSET		(size_t)0xC413
 #define MOCK_SRC_OFFSET		(size_t)0xC414
 #define MOCK_LEN		(size_t)0xC415
+#define MOCK_UNKNOWN_OP		((enum ibv_wr_opcode)(-1))
 #define MOCK_OP_CONTEXT		(void *)0xC417
 #define MOCK_DESC		(void *)0xC418
+
+/* these values are derived from DESC_EXP_PMEM/DRAM above */
+#define MOCK_RADDR		(uint64_t)0x0001020304050607
+#define MOCK_RKEY		(uint32_t)0x10111213
+
+#define MOCK_LADDR		(uint64_t)0x0001020304050607
+#define MOCK_LKEY		(uint32_t)0x20212223
+#define MOCK_ADVICE		1
+#define MOCK_MR_FLAG		(1 << 1)
 
 /* a state used for rpma_mr_read/_write tests */
 struct mrs {

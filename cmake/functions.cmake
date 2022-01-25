@@ -1,6 +1,6 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
-# Copyright 2018-2020, Intel Corporation
+# Copyright 2018-2021, Intel Corporation
 #
 
 #
@@ -90,6 +90,38 @@ function(add_cstyle name)
 	add_dependencies(cstyle cstyle-${name})
 endfunction()
 
+# Generates pep8-$name target and attaches it as a dependency of the global
+# "cstyle" target. pep8-$name target verifies adherence to PEP8 Style Guide
+# for Python Code of files in current source dir. If more arguments are used,
+# they are used as files to be checked instead. ${name} must be unique.
+function(add_cstyle_pep8 name)
+	set(PYLINT_RCFILE "${CMAKE_SOURCE_DIR}/utils/pylint.rc")
+	set(PYLINT_ARGS "--rcfile=${PYLINT_RCFILE}")
+
+	if(${ARGC} EQUAL 1)
+		add_custom_command(OUTPUT ${CMAKE_BINARY_DIR}/pep8-${name}-status
+			DEPENDS ${PYLINT_RCFILE} ${CMAKE_CURRENT_SOURCE_DIR}/*.py
+			COMMAND
+				${PYLINT_EXECUTABLE} ${PYLINT_ARGS}
+					${CMAKE_CURRENT_SOURCE_DIR}/*.py
+			COMMAND
+				${CMAKE_COMMAND} -E touch ${CMAKE_BINARY_DIR}/pep8-${name}-status
+			)
+	else()
+		add_custom_command(OUTPUT ${CMAKE_BINARY_DIR}/pep8-${name}-status
+			DEPENDS ${PYLINT_RCFILE} ${ARGN}
+			COMMAND
+				${PYLINT_EXECUTABLE} ${PYLINT_ARGS} ${ARGN}
+			COMMAND
+				${CMAKE_COMMAND} -E touch ${CMAKE_BINARY_DIR}/pep8-${name}-status
+			)
+	endif()
+
+	add_custom_target(cstyle-${name}
+			DEPENDS ${CMAKE_BINARY_DIR}/pep8-${name}-status)
+	add_dependencies(cstyle cstyle-${name})
+endfunction()
+
 # Generates check-whitespace-$name target and attaches it as a dependency
 # of global "check-whitespace" target.
 # ${name} must be unique.
@@ -163,21 +195,34 @@ function(is_ODP_supported var)
 	set(var ${ON_DEMAND_PAGING_SUPPORTED} PARENT_SCOPE)
 endfunction()
 
+# check if libibverbs has ibv_advise_mr() support
+function(is_ibv_advise_mr_supported var)
+	CHECK_C_SOURCE_COMPILES("
+		#include <infiniband/verbs.h>
+		/* check if ibv_advise_mr() is defined */
+		int main() {
+			if (!ibv_advise_mr)
+				return -1;
+			return 0;
+		}"
+		IBV_ADVISE_MR_SUPPORTED)
+	set(var ${IBV_ADVISE_MR_SUPPORTED} PARENT_SCOPE)
+endfunction()
+
 # check if librdmacm has correct signature of rdma_getaddrinfo()
 function(check_signature_rdma_getaddrinfo var)
-	if(${CMAKE_C_COMPILER} MATCHES "gcc")
-		# check if the GCC compiler supports the '-Werror=discarded-qualifiers' flag
-		CHECK_C_COMPILER_FLAG("-Werror=discarded-qualifiers" C_HAS_Werror_discarded_qualifiers)
-		if(C_HAS_Werror_discarded_qualifiers)
-			set(RUN_CHECK_C_SOURCE_COMPILES 1)
-		endif()
-	else()
-		# the clang compiler ignores the '-Werror=discarded-qualifiers' flag
-		set(RUN_CHECK_C_SOURCE_COMPILES 1)
+	get_filename_component(REAL_CMAKE_C_COMPILER ${CMAKE_C_COMPILER} REALPATH)
+	if(${REAL_CMAKE_C_COMPILER} MATCHES "gcc")
+		set(DISCARDED_QUALIFIERS_FLAG "-Werror=discarded-qualifiers")
+	elseif(${REAL_CMAKE_C_COMPILER} MATCHES "clang")
+		set(DISCARDED_QUALIFIERS_FLAG "-Werror;-Wincompatible-pointer-types-discards-qualifiers")
 	endif()
 
-	if(RUN_CHECK_C_SOURCE_COMPILES)
-		set(CMAKE_REQUIRED_FLAGS "-Werror=discarded-qualifiers;${CMAKE_REQUIRED_FLAGS}")
+	# check if a compiler supports the ${DISCARDED_QUALIFIERS_FLAG} flag
+	CHECK_C_COMPILER_FLAG("${DISCARDED_QUALIFIERS_FLAG}" C_HAS_Werror_discarded_qualifiers)
+
+	if(C_HAS_Werror_discarded_qualifiers)
+		set(CMAKE_REQUIRED_FLAGS "${DISCARDED_QUALIFIERS_FLAG};${CMAKE_REQUIRED_FLAGS}")
 		set(CMAKE_REQUIRED_LIBRARIES "-lrdmacm;${CMAKE_REQUIRED_LIBRARIES}")
 
 		CHECK_C_SOURCE_COMPILES("

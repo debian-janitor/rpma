@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
-/* Copyright 2020, Intel Corporation */
+/* Copyright 2020-2021, Intel Corporation */
+/* Copyright 2021, Fujitsu */
 
 /*
  * client.c -- a client of the atomic-write example
@@ -63,7 +64,7 @@ main(int argc, char *argv[])
 		goto err_free;
 
 	/* establish a new connection to a server listening at addr:port */
-	if ((ret = client_connect(peer, addr, port, NULL, &conn)))
+	if ((ret = client_connect(peer, addr, port, NULL, NULL, &conn)))
 		goto err_peer_delete;
 
 	/*
@@ -109,16 +110,21 @@ main(int argc, char *argv[])
 			sizeof(uint64_t), RPMA_F_COMPLETION_ALWAYS, NULL)))
 		goto err_mr_remote_delete;
 
-	/* wait for the completion to be ready */
-	if ((ret = rpma_conn_completion_wait(conn)))
+	/* get the connection's main CQ */
+	struct rpma_cq *cq = NULL;
+	if ((ret = rpma_conn_get_cq(conn, &cq)))
 		goto err_mr_remote_delete;
 
-	if ((ret = rpma_conn_completion_get(conn, &cmpl)))
+	/* wait for the completion to be ready */
+	if ((ret = rpma_cq_wait(cq)))
+		goto err_mr_remote_delete;
+
+	if ((ret = rpma_cq_get_completion(cq, &cmpl)))
 		goto err_mr_remote_delete;
 
 	if (cmpl.op_status != IBV_WC_SUCCESS) {
-		(void) fprintf(stderr, "rpma_read failed with %d\n",
-				cmpl.op_status);
+		(void) fprintf(stderr, "rpma_read() failed: %s\n",
+				ibv_wc_status_str(cmpl.op_status));
 		goto err_mr_remote_delete;
 	}
 
@@ -171,15 +177,24 @@ main(int argc, char *argv[])
 			break;
 
 		/* wait for the completion to be ready */
-		if ((ret = rpma_conn_completion_wait(conn)))
+		if ((ret = rpma_cq_wait(cq)))
 			break;
 
-		if ((ret = rpma_conn_completion_get(conn, &cmpl)))
+		if ((ret = rpma_cq_get_completion(cq, &cmpl)))
 			break;
+
+		if (cmpl.op_context != FLUSH_ID) {
+			(void) fprintf(stderr,
+				"unexpected cmpl.op_context value "
+				"(0x%" PRIXPTR " != 0x%" PRIXPTR ")\n",
+				(uintptr_t)cmpl.op_context,
+				(uintptr_t)FLUSH_ID);
+			break;
+		}
 
 		if (cmpl.op_status != IBV_WC_SUCCESS) {
-			(void) fprintf(stderr, "rpma_flush failed with %d\n",
-					cmpl.op_status);
+			(void) fprintf(stderr, "rpma_flush() failed: %s\n",
+					ibv_wc_status_str(cmpl.op_status));
 			break;
 		}
 	}

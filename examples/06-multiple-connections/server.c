@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
-/* Copyright 2020, Intel Corporation */
+/* Copyright 2020-2021, Intel Corporation */
+/* Copyright 2021, Fujitsu */
 
 /*
  * server.c -- a server of the multiple-connections example
@@ -25,6 +26,7 @@
 struct client_res {
 	/* RPMA resources */
 	struct rpma_conn *conn;
+	struct rpma_cq *cq;
 
 	/* resources - memory regions */
 	size_t offset;
@@ -110,7 +112,7 @@ server_fini(struct server_res *svr)
  * client_new -- find a slot for the incoming client
  */
 struct client_res *
-client_new(struct server_res *svr, struct rpma_conn_req *req)
+client_new(struct server_res *svr)
 {
 	/* find the first free slot */
 	struct client_res *clnt = NULL;
@@ -150,7 +152,7 @@ client_add_to_epoll(struct client_res *clnt, int epoll)
 		return ret;
 
 	/* get the connection's completion fd and add it to epoll */
-	ret = rpma_conn_get_completion_fd(clnt->conn, &fd);
+	ret = rpma_cq_get_fd(clnt->cq, &fd);
 	if (ret) {
 		epoll_delete(epoll, &clnt->ev_conn_event);
 		return ret;
@@ -205,39 +207,45 @@ client_handle_completion(struct custom_event *ce)
 	struct client_res *clnt = (struct client_res *)ce->arg;
 	const struct server_res *svr = clnt->svr;
 
-	/* prepare detected completions for processing */
-	int ret = rpma_conn_completion_wait(clnt->conn);
+	/* wait for the completion to be ready */
+	int ret = rpma_cq_wait(clnt->cq);
 	if (ret) {
 		/* no completion is ready - continue */
 		if (ret == RPMA_E_NO_COMPLETION)
 			return;
 
-		/* another error occured - disconnect */
+		/* another error occurred - disconnect */
 		(void) rpma_conn_disconnect(clnt->conn);
 		return;
 	}
 
 	/* get next completion */
 	struct rpma_completion cmpl;
-	ret = rpma_conn_completion_get(clnt->conn, &cmpl);
+	ret = rpma_cq_get_completion(clnt->cq, &cmpl);
 	if (ret) {
 		/* no completion is ready - continue */
 		if (ret == RPMA_E_NO_COMPLETION)
 			return;
 
-		/* another error occured - disconnect */
+		/* another error occurred - disconnect */
 		(void) rpma_conn_disconnect(clnt->conn);
 		return;
 	}
 
 	/* validate received completion */
-	if (cmpl.op != RPMA_OP_READ || cmpl.op_status != IBV_WC_SUCCESS) {
+	if (cmpl.op_status != IBV_WC_SUCCESS) {
 		(void) fprintf(stderr,
-				"[%d] received completion is not as expected (%d != %d || %d != %d)\n",
+				"[%d] rpma_read() failed: %s\n",
 				clnt->client_id,
-				cmpl.op, RPMA_OP_READ,
-				cmpl.op_status, IBV_WC_SUCCESS);
+				ibv_wc_status_str(cmpl.op_status));
+		(void) rpma_conn_disconnect(clnt->conn);
+		return;
+	}
 
+	if (cmpl.op != RPMA_OP_READ) {
+		(void) fprintf(stderr,
+				"[%d] received unexpected cmpl.op value (%d != %d)\n",
+				clnt->client_id, cmpl.op, RPMA_OP_READ);
 		(void) rpma_conn_disconnect(clnt->conn);
 		return;
 	}
@@ -359,7 +367,7 @@ server_handle_incoming_client(struct custom_event *ce)
 
 	/* if no free slot is available */
 	struct client_res *clnt = NULL;
-	if ((clnt = client_new(svr, req)) == NULL) {
+	if ((clnt = client_new(svr)) == NULL) {
 		rpma_conn_req_delete(&req);
 		return;
 	}
@@ -373,6 +381,13 @@ server_handle_incoming_client(struct custom_event *ce)
 		 * would choose the same client slot if another client will
 		 * come. No additional cleanup needed.
 		 */
+		return;
+	}
+
+	/* get the connection's main CQ */
+	if (rpma_conn_get_cq(clnt->conn, &clnt->cq)) {
+		/* an error occurred - disconnect */
+		(void) rpma_conn_disconnect(clnt->conn);
 		return;
 	}
 
@@ -448,6 +463,7 @@ main(int argc, char *argv[])
 			continue;
 
 		(void) rpma_conn_disconnect(svr.clients[i].conn);
+		(void) rpma_conn_delete(&svr.clients[i].conn);
 	}
 
 	if (ret == 0)

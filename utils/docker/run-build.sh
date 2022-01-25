@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # SPDX-License-Identifier: BSD-3-Clause
-# Copyright 2016-2020, Intel Corporation
+# Copyright 2016-2022, Intel Corporation
 #
 
 #
@@ -15,7 +15,11 @@ PREFIX=/usr
 CC=${CC:-gcc}
 CHECK_CSTYLE=${CHECK_CSTYLE:-ON}
 TEST_DIR=${RPMA_TEST_DIR:-${DEFAULT_TEST_DIR}}
+TEST_PYTHON_TOOLS=${TEST_PYTHON_TOOLS:-ON}
 EXAMPLE_TEST_DIR="/tmp/rpma_example_build"
+
+# turn off sanitizers only if (CI_SANITS == OFF)
+[ "$CI_SANITS" != "OFF" ] && CI_SANITS=ON
 
 if [ "$WORKDIR" == "" ]; then
 	echo "Error: WORKDIR is not set"
@@ -106,7 +110,7 @@ function test_compile_all_examples_standalone() {
 			case $e in
 			09-flush-to-persistent-GPSPM)
 				echo
-				echo "SKIP: Skipping the '$e' example, becuase libprotobuf-c is missing"
+				echo "SKIP: Skipping the '$e' example, because libprotobuf-c is missing"
 				echo
 				continue
 				;;
@@ -123,6 +127,27 @@ function test_compile_all_examples_standalone() {
 		echo "###########################################################"
 		compile_example_standalone $DIR
 	done
+}
+
+function run_pytest() {
+	[ "$TEST_PYTHON_TOOLS" != "ON" ] && return
+	# find pytest
+	PYTESTS="pytest pytest3 pytest-3"
+	for bin in $PYTESTS; do
+		which $bin && export PYTEST=$(which $bin) && break
+	done
+
+	if [ "$PYTEST" == "" ]; then
+		echo
+		echo "ERROR: pytest not found"
+		echo
+		exit 1
+	fi
+
+	# run pytest
+	cd $WORKDIR/tools/perf/
+	eval $PYTEST
+	cd -
 }
 
 ./prepare-for-build.sh
@@ -144,12 +169,15 @@ CC=$CC \
 cmake .. -DCMAKE_BUILD_TYPE=Debug \
 	-DTEST_DIR=$TEST_DIR \
 	-DCHECK_CSTYLE=${CHECK_CSTYLE} \
+	-DTESTS_SOFT_ROCE=OFF \
 	-DDEVELOPER_MODE=1 \
-	-DUSE_ASAN=ON \
-	-DUSE_UBSAN=ON
+	-DUSE_ASAN=${CI_SANITS} \
+	-DTEST_PYTHON_TOOLS=${TEST_PYTHON_TOOLS} \
+	-DUSE_UBSAN=${CI_SANITS}
 
 make -j$(nproc)
 ctest --output-on-failure
+run_pytest
 
 cd $WORKDIR
 rm -rf $WORKDIR/build
@@ -168,6 +196,8 @@ cmake .. -DCMAKE_BUILD_TYPE=Debug \
 	-DCMAKE_INSTALL_PREFIX=$PREFIX \
 	-DCOVERAGE=$COVERAGE \
 	-DCHECK_CSTYLE=${CHECK_CSTYLE} \
+	-DTESTS_SOFT_ROCE=OFF \
+	-DTEST_PYTHON_TOOLS=${TEST_PYTHON_TOOLS} \
 	-DDEVELOPER_MODE=1
 
 make -j$(nproc)
@@ -207,6 +237,8 @@ cmake .. -DCMAKE_BUILD_TYPE=Release \
 	-DCMAKE_INSTALL_PREFIX=$PREFIX \
 	-DCPACK_GENERATOR=$PACKAGE_MANAGER \
 	-DCHECK_CSTYLE=${CHECK_CSTYLE} \
+	-DTESTS_SOFT_ROCE=OFF \
+	-DTEST_PYTHON_TOOLS=${TEST_PYTHON_TOOLS} \
 	-DDEVELOPER_MODE=1
 
 make -j$(nproc)

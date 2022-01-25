@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BSD-3-Clause
-/* Copyright 2020, Intel Corporation */
+/* Copyright 2020-2021, Intel Corporation */
 
 /*
  * server.c -- a server of the connection example
@@ -21,7 +21,7 @@ main(int argc, char *argv[])
 {
 	if (argc < 3) {
 		fprintf(stderr, "usage: %s <addr> <port>\n", argv[0]);
-		abort();
+		return -1;
 	}
 
 	/* configure logging thresholds to see more details */
@@ -80,7 +80,8 @@ main(int argc, char *argv[])
 		goto err_conn_delete;
 	} else if (conn_event != RPMA_CONN_ESTABLISHED) {
 		fprintf(stderr,
-				"rpma_conn_next_event returned an unexpected event\n");
+			"rpma_conn_next_event returned an unexpected event: %s\n",
+			rpma_utils_conn_event_2str(conn_event));
 		goto err_conn_delete;
 	}
 
@@ -104,7 +105,8 @@ main(int argc, char *argv[])
 		goto err_conn_delete;
 	} else if (conn_event != RPMA_CONN_CLOSED) {
 		fprintf(stderr,
-				"rpma_conn_next_event returned an unexpected event\n");
+			"rpma_conn_next_event returned an unexpected event: %s\n",
+			rpma_utils_conn_event_2str(conn_event));
 		goto err_conn_delete;
 	}
 

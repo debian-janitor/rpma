@@ -38,7 +38,7 @@ git checkout -B ${TARGET_BRANCH} upstream/${TARGET_BRANCH}
 mkdir build
 cd build
 
-cmake -DBUILD_TESTS=OFF -DBUILD_EXAMPLES=OFF -DBUILD_BENCHMARKS=OFF ..
+cmake -DBUILD_TESTS=OFF -DBUILD_EXAMPLES=OFF ..
 make -j$(nproc) doc
 cp -R doc/md ../..
 
@@ -50,10 +50,11 @@ git checkout -B $GH_PAGES_NAME upstream/gh-pages
 git clean -dfx
 
 # Clean old content, since some files might have been deleted
-rm -r ./$VERSION
-mkdir ./$VERSION
+DOCS_DIR=./manpages/$VERSION/
+rm -r $DOCS_DIR
+mkdir $DOCS_DIR
 
-cp -r ../md/* ./$VERSION/
+cp -r ../md/* $DOCS_DIR
 
 # Add and push changes.
 # git commit command may fail if there is nothing to commit.

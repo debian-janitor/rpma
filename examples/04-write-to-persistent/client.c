@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
-/* Copyright 2020, Intel Corporation */
+/* Copyright 2020-2022, Intel Corporation */
+/* Copyright 2021, Fujitsu */
 
 /*
  * client.c -- a client of the write-to-persistent example
@@ -10,29 +11,15 @@
 #include <librpma.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include "common-conn.h"
+#include "hello.h"
 
 #ifdef USE_LIBPMEM
 #include <libpmem.h>
-#define USAGE_STR "usage: %s <server_address> <port> [<pmem-path>]\n"
+#define USAGE_STR "usage: %s <server_address> <port> [<pmem-path>]\n"PMEM_USAGE
 #else
 #define USAGE_STR "usage: %s <server_address> <port>\n"
 #endif /* USE_LIBPMEM */
-
-#include "common-conn.h"
-
-enum lang_t {en, es};
-
-static const char *hello_str[] = {
-	[en] = "Hello world!",
-	[es] = "¡Hola Mundo!"
-};
-
-#define LANG_NUM	(sizeof(hello_str) / sizeof(hello_str[0]))
-
-struct hello_t {
-	enum lang_t lang;
-	char str[KILOBYTE];
-};
 
 static inline void
 write_hello_str(struct hello_t *hello, enum lang_t lang)
@@ -49,6 +36,15 @@ translate(struct hello_t *hello)
 	enum lang_t lang = (enum lang_t)((hello->lang + 1) % LANG_NUM);
 	write_hello_str(hello, lang);
 }
+
+#ifdef TEST_USE_CMOCKA
+#include "cmocka_headers.h"
+#include "cmocka_alloc.h"
+#endif
+
+#ifdef TEST_MOCK_MAIN
+#define main client_main
+#endif
 
 int
 main(int argc, char *argv[])
@@ -92,11 +88,16 @@ main(int argc, char *argv[])
 		/* map the file */
 		mr_ptr = pmem_map_file(path, 0 /* len */, 0 /* flags */,
 				0 /* mode */, &mr_size, &is_pmem);
-		if (mr_ptr == NULL)
+		if (mr_ptr == NULL) {
+			(void) fprintf(stderr, "pmem_map_file() for %s "
+					"failed\n", path);
 			return -1;
+		}
 
 		/* pmem is expected */
 		if (!is_pmem) {
+			(void) fprintf(stderr, "%s is not an actual PMEM\n",
+					path);
 			(void) pmem_unmap(mr_ptr, mr_size);
 			return -1;
 		}
@@ -147,6 +148,7 @@ main(int argc, char *argv[])
 
 	/* if no pmem support or it is not provided */
 	if (mr_ptr == NULL) {
+		(void) fprintf(stderr, NO_PMEM_MSG);
 		mr_ptr = malloc_aligned(sizeof(struct hello_t));
 		if (mr_ptr == NULL)
 			return -1;
@@ -179,7 +181,7 @@ main(int argc, char *argv[])
 		goto err_free;
 
 	/* establish a new connection to a server listening at addr:port */
-	ret = client_connect(peer, addr, port, NULL, &conn);
+	ret = client_connect(peer, addr, port, NULL, NULL, &conn);
 	if (ret)
 		goto err_peer_delete;
 
@@ -216,6 +218,7 @@ main(int argc, char *argv[])
 	if (ret) {
 		goto err_mr_dereg;
 	} else if (dst_size < KILOBYTE) {
+		ret = -1;
 		fprintf(stderr,
 				"Remote memory region size too small for writing the data of the assumed size (%zu < %d)\n",
 				dst_size, KILOBYTE);
@@ -235,24 +238,33 @@ main(int argc, char *argv[])
 	if (ret)
 		goto err_mr_remote_delete;
 
+	/* get the connection's main CQ */
+	struct rpma_cq *cq = NULL;
+	ret = rpma_conn_get_cq(conn, &cq);
+	if (ret)
+		goto err_mr_remote_delete;
+
 	/* wait for the completion to be ready */
-	ret = rpma_conn_completion_wait(conn);
+	ret = rpma_cq_wait(cq);
 	if (ret)
 		goto err_mr_remote_delete;
 
-	ret = rpma_conn_completion_get(conn, &cmpl);
+	ret = rpma_cq_get_completion(cq, &cmpl);
 	if (ret)
 		goto err_mr_remote_delete;
 
-	if (cmpl.op != RPMA_OP_READ) {
-		(void) fprintf(stderr,
-				"unexpected cmpl.op value (%d != %d)\n",
-				cmpl.op, (RPMA_OP_READ | RPMA_OP_WRITE));
+	if (cmpl.op_status != IBV_WC_SUCCESS) {
+		ret = -1;
+		(void) fprintf(stderr, "rpma_read() failed: %s\n",
+				ibv_wc_status_str(cmpl.op_status));
 		goto err_mr_remote_delete;
 	}
-	if (cmpl.op_status != IBV_WC_SUCCESS) {
-		(void) fprintf(stderr, "rpma_read failed with %d\n",
-				cmpl.op_status);
+
+	if (cmpl.op != RPMA_OP_READ) {
+		ret = -1;
+		(void) fprintf(stderr,
+				"unexpected cmpl.op value (%d != %d)\n",
+				cmpl.op, RPMA_OP_READ);
 		goto err_mr_remote_delete;
 	}
 

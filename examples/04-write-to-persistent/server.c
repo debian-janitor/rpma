@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BSD-3-Clause
-/* Copyright 2020, Intel Corporation */
+/* Copyright 2020-2022, Intel Corporation */
 
 /*
  * server.c -- a server of the write-to-persistent example
@@ -11,15 +11,23 @@
 #include <librpma.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include "common-conn.h"
 
 #ifdef USE_LIBPMEM
 #include <libpmem.h>
-#define USAGE_STR "usage: %s <server_address> <port> [<pmem-path>]\n"
+#define USAGE_STR "usage: %s <server_address> <port> [<pmem-path>]\n"PMEM_USAGE
 #else
 #define USAGE_STR "usage: %s <server_address> <port>\n"
 #endif /* USE_LIBPMEM */
 
-#include "common-conn.h"
+#ifdef TEST_USE_CMOCKA
+#include "cmocka_headers.h"
+#include "cmocka_alloc.h"
+#endif
+
+#ifdef TEST_MOCK_MAIN
+#define main server_main
+#endif
 
 int
 main(int argc, char *argv[])
@@ -46,18 +54,24 @@ main(int argc, char *argv[])
 	struct rpma_mr_local *mr = NULL;
 
 #ifdef USE_LIBPMEM
+	char *pmem_path = NULL;
 	int is_pmem = 0;
 	if (argc >= 4) {
-		char *path = argv[3];
+		pmem_path = argv[3];
 
 		/* map the file */
-		mr_ptr = pmem_map_file(path, 0 /* len */, 0 /* flags */,
+		mr_ptr = pmem_map_file(pmem_path, 0 /* len */, 0 /* flags */,
 				0 /* mode */, &mr_size, &is_pmem);
-		if (mr_ptr == NULL)
+		if (mr_ptr == NULL) {
+			(void) fprintf(stderr, "pmem_map_file() for %s "
+					"failed\n", pmem_path);
 			return -1;
+		}
 
 		/* pmem is expected */
 		if (!is_pmem) {
+			(void) fprintf(stderr, "%s is not an actual PMEM\n",
+					pmem_path);
 			(void) pmem_unmap(mr_ptr, mr_size);
 			return -1;
 		}
@@ -71,7 +85,7 @@ main(int argc, char *argv[])
 		 */
 		if (mr_size < SIGNATURE_LEN) {
 			(void) fprintf(stderr, "%s too small (%zu < %zu)\n",
-					path, mr_size, SIGNATURE_LEN);
+					pmem_path, mr_size, SIGNATURE_LEN);
 			(void) pmem_unmap(mr_ptr, mr_size);
 			return -1;
 		}
@@ -83,7 +97,7 @@ main(int argc, char *argv[])
 		 */
 		if (mr_size - data_offset < KILOBYTE) {
 			fprintf(stderr, "%s too small (%zu < %zu)\n",
-					path, mr_size, KILOBYTE + data_offset);
+				pmem_path, mr_size, KILOBYTE + data_offset);
 			(void) pmem_unmap(mr_ptr, mr_size);
 			return -1;
 		}
@@ -102,10 +116,11 @@ main(int argc, char *argv[])
 			pmem_persist(mr_ptr, SIGNATURE_LEN);
 		}
 	}
-#endif
+#endif /* USE_LIBPMEM */
 
 	/* if no pmem support or it is not provided */
 	if (mr_ptr == NULL) {
+		(void) fprintf(stderr, NO_PMEM_MSG);
 		mr_ptr = malloc_aligned(KILOBYTE);
 		if (mr_ptr == NULL)
 			return -1;
@@ -141,6 +156,17 @@ main(int argc, char *argv[])
 	if (ret)
 		goto err_ep_shutdown;
 
+#ifdef USE_LIBPMEM
+	/* rpma_mr_advise() should be called only in case of FsDAX */
+	if (is_pmem && strstr(pmem_path, "/dev/dax") == NULL) {
+		ret = rpma_mr_advise(mr, 0, mr_size,
+			IBV_ADVISE_MR_ADVICE_PREFETCH_WRITE,
+			IBV_ADVISE_MR_FLAG_FLUSH);
+		if (ret)
+			goto err_mr_dereg;
+	}
+#endif /* USE_LIBPMEM */
+
 	/* get size of the memory region's descriptor */
 	size_t mr_desc_size;
 	ret = rpma_mr_get_descriptor_size(mr, &mr_desc_size);
@@ -148,7 +174,7 @@ main(int argc, char *argv[])
 		goto err_mr_dereg;
 
 	/* calculate data for the client write */
-	struct common_data data;
+	struct common_data data = {0};
 	data.data_offset = data_offset;
 	data.mr_desc_size = mr_desc_size;
 
@@ -164,7 +190,7 @@ main(int argc, char *argv[])
 	struct rpma_conn_private_data pdata;
 	pdata.ptr = &data;
 	pdata.len = sizeof(struct common_data);
-	ret = server_accept_connection(ep, &pdata, &conn);
+	ret = server_accept_connection(ep, NULL, &pdata, &conn);
 	if (ret)
 		goto err_mr_dereg;
 
@@ -196,7 +222,7 @@ err_free:
 		pmem_unmap(mr_ptr, mr_size);
 		mr_ptr = NULL;
 	}
-#endif
+#endif /* USE_LIBPMEM */
 
 	if (mr_ptr != NULL)
 		free(mr_ptr);

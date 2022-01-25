@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
-/* Copyright 2020, Intel Corporation */
+/* Copyright 2020-2021, Intel Corporation */
+/* Copyright 2021, Fujitsu */
 
 /*
  * conn-next-event.c -- the connection next_event unit tests
@@ -55,17 +56,17 @@ next_event__conn_NULL_event_NULL(void **unused)
 }
 
 /*
- * next_event__get_cm_event_EAGAIN -
- * rdma_get_cm_event() fails with EAGAIN
+ * next_event__get_cm_event_ERRNO -
+ * rdma_get_cm_event() fails with MOCK_ERRNO
  */
 static void
-next_event__get_cm_event_EAGAIN(void **cstate_ptr)
+next_event__get_cm_event_ERRNO(void **cstate_ptr)
 {
 	struct conn_test_state *cstate = *cstate_ptr;
 
 	expect_value(rdma_get_cm_event, channel, MOCK_EVCH);
 	will_return(rdma_get_cm_event, NULL);
-	will_return(rdma_get_cm_event, EAGAIN);
+	will_return(rdma_get_cm_event, MOCK_ERRNO);
 
 	/* run test */
 	enum rpma_conn_event c_event = RPMA_CONN_UNDEFINED;
@@ -99,17 +100,17 @@ next_event__get_cm_event_ENODATA(void **cstate_ptr)
 }
 
 /*
- * next_event__event_REJECTED -
- * RDMA_CM_EVENT_REJECTED is unexpected
+ * next_event__event_UNREACHABLE -
+ * RDMA_CM_EVENT_UNREACHABLE is unexpected
  */
 static void
-next_event__event_REJECTED(void **cstate_ptr)
+next_event__event_UNREACHABLE(void **cstate_ptr)
 {
 	struct conn_test_state *cstate = *cstate_ptr;
 
 	expect_value(rdma_get_cm_event, channel, MOCK_EVCH);
 	struct rdma_cm_event event;
-	event.event = RDMA_CM_EVENT_REJECTED;
+	event.event = RDMA_CM_EVENT_UNREACHABLE;
 	will_return(rdma_get_cm_event, &event);
 
 	expect_value(rdma_ack_cm_event, event, &event);
@@ -125,22 +126,22 @@ next_event__event_REJECTED(void **cstate_ptr)
 }
 
 /*
- * next_event__event_REJECTED_ack_EINVAL -
- * rdma_ack_cm_event() fails with EINVAL after obtaining
- * an RDMA_CM_EVENT_REJECTED event
+ * next_event__event_UNREACHABLE_ack_ERRNO -
+ * rdma_ack_cm_event() fails with MOCK_ERRNO after obtaining
+ * an RDMA_CM_EVENT_UNREACHABLE event
  */
 static void
-next_event__event_REJECTED_ack_EINVAL(void **cstate_ptr)
+next_event__event_UNREACHABLE_ack_ERRNO(void **cstate_ptr)
 {
 	struct conn_test_state *cstate = *cstate_ptr;
 
 	expect_value(rdma_get_cm_event, channel, MOCK_EVCH);
 	struct rdma_cm_event event;
-	event.event = RDMA_CM_EVENT_REJECTED;
+	event.event = RDMA_CM_EVENT_UNREACHABLE;
 	will_return(rdma_get_cm_event, &event);
 
 	expect_value(rdma_ack_cm_event, event, &event);
-	will_return(rdma_ack_cm_event, EINVAL);
+	will_return(rdma_ack_cm_event, MOCK_ERRNO);
 
 	expect_value(rpma_private_data_discard, pdata->ptr, NULL);
 	expect_value(rpma_private_data_discard, pdata->len, 0);
@@ -155,11 +156,11 @@ next_event__event_REJECTED_ack_EINVAL(void **cstate_ptr)
 }
 
 /*
- * next_event__data_store_ENOMEM - rpma_private_data_store fails
+ * next_event__data_store_E_NOMEM - rpma_private_data_store() fails
  * with RPMA_E_NOMEM
  */
 static void
-next_event__data_store_ENOMEM(void **cstate_ptr)
+next_event__data_store_E_NOMEM(void **cstate_ptr)
 {
 	struct conn_test_state *cstate = *cstate_ptr;
 
@@ -167,9 +168,9 @@ next_event__data_store_ENOMEM(void **cstate_ptr)
 	struct rdma_cm_event event;
 	event.event = RDMA_CM_EVENT_ESTABLISHED;
 	will_return(rdma_get_cm_event, &event);
+	will_return(rpma_private_data_store, RPMA_E_NOMEM);
 	expect_value(rdma_ack_cm_event, event, &event);
 	will_return(rdma_ack_cm_event, MOCK_OK);
-	will_return(rpma_private_data_store, RPMA_E_NOMEM);
 
 	/* run test */
 	enum rpma_conn_event c_event = RPMA_CONN_UNDEFINED;
@@ -197,11 +198,9 @@ next_event__success_no_data_ESTABLISHED_no_data(void **cstate_ptr)
 	event.param.conn.private_data = NULL;
 	event.param.conn.private_data_len = 0;
 	will_return(rdma_get_cm_event, &event);
-
+	will_return(rpma_private_data_store, MOCK_OK);
 	expect_value(rdma_ack_cm_event, event, &event);
 	will_return(rdma_ack_cm_event, MOCK_OK);
-
-	will_return_maybe(rpma_private_data_store, MOCK_OK);
 
 	/* run test */
 	enum rpma_conn_event c_event = RPMA_CONN_UNDEFINED;
@@ -242,11 +241,9 @@ next_event__success_no_data_ESTABLISHED_with_data(void **cstate_ptr)
 	event.param.conn.private_data = MOCK_PRIVATE_DATA;
 	event.param.conn.private_data_len = MOCK_PDATA_LEN;
 	will_return(rdma_get_cm_event, &event);
-
+	will_return(rpma_private_data_store, MOCK_OK);
 	expect_value(rdma_ack_cm_event, event, &event);
 	will_return(rdma_ack_cm_event, MOCK_OK);
-
-	will_return_maybe(rpma_private_data_store, MOCK_OK);
 
 	/* run test */
 	enum rpma_conn_event c_event = RPMA_CONN_UNDEFINED;
@@ -279,27 +276,26 @@ next_event__success_with_data_ESTABLISHED_no_data(void **cstate_ptr)
 {
 	struct conn_test_state *cstate = *cstate_ptr;
 
-	/* configure mocks for rpma_conn_set_private_data() */
+	/* configure mocks for rpma_conn_transfer_private_data() */
 	struct rpma_conn_private_data data;
 	data.ptr = MOCK_PRIVATE_DATA;
 	data.len = MOCK_PDATA_LEN;
-	will_return(rpma_private_data_copy, 0);
-	will_return(rpma_private_data_copy, MOCK_PRIVATE_DATA);
 
-	/* set private data in the connection */
-	int ret = rpma_conn_set_private_data(cstate->conn, &data);
+	/* transfer the private data to the connection (a take over) */
+	rpma_conn_transfer_private_data(cstate->conn, &data);
 
-	/* verify the results of rpma_conn_set_private_data() */
-	assert_int_equal(ret, MOCK_OK);
+	/* verify the source of the private data is zeroed */
+	assert_ptr_equal(data.ptr, NULL);
+	assert_int_equal(data.len, 0);
 
 	/* get the private data */
 	struct rpma_conn_private_data check_data;
-	ret = rpma_conn_get_private_data(cstate->conn, &check_data);
+	int ret = rpma_conn_get_private_data(cstate->conn, &check_data);
 
 	/* verify the results of rpma_conn_get_private_data() */
 	assert_int_equal(ret, MOCK_OK);
-	assert_ptr_equal(check_data.ptr, data.ptr);
-	assert_int_equal(check_data.len, data.len);
+	assert_ptr_equal(check_data.ptr, MOCK_PRIVATE_DATA);
+	assert_int_equal(check_data.len, MOCK_PDATA_LEN);
 
 	/* configure mocks for rpma_conn_next_event() */
 	expect_value(rdma_get_cm_event, channel, MOCK_EVCH);
@@ -312,8 +308,6 @@ next_event__success_with_data_ESTABLISHED_no_data(void **cstate_ptr)
 
 	expect_value(rdma_ack_cm_event, event, &event);
 	will_return(rdma_ack_cm_event, MOCK_OK);
-
-	will_return_maybe(rpma_private_data_store, MOCK_OK);
 
 	/* run test */
 	enum rpma_conn_event c_event = RPMA_CONN_UNDEFINED;
@@ -346,27 +340,26 @@ next_event__success_with_data_ESTABLISHED_with_data(void **cstate_ptr)
 {
 	struct conn_test_state *cstate = *cstate_ptr;
 
-	/* configure mocks for rpma_conn_set_private_data() */
+	/* configure mocks for rpma_conn_transfer_private_data() */
 	struct rpma_conn_private_data data;
 	data.ptr = MOCK_PRIVATE_DATA;
 	data.len = MOCK_PDATA_LEN;
-	will_return(rpma_private_data_copy, 0);
-	will_return(rpma_private_data_copy, MOCK_PRIVATE_DATA);
 
-	/* set private data in the connection */
-	int ret = rpma_conn_set_private_data(cstate->conn, &data);
+	/* transfer the private data to the connection (a take over) */
+	rpma_conn_transfer_private_data(cstate->conn, &data);
 
-	/* verify the results of rpma_conn_set_private_data() */
-	assert_int_equal(ret, MOCK_OK);
+	/* verify the source of the private data is zeroed */
+	assert_ptr_equal(data.ptr, NULL);
+	assert_int_equal(data.len, 0);
 
 	/* get the private data */
 	struct rpma_conn_private_data check_data;
-	ret = rpma_conn_get_private_data(cstate->conn, &check_data);
+	int ret = rpma_conn_get_private_data(cstate->conn, &check_data);
 
 	/* verify the results of rpma_conn_get_private_data() */
 	assert_int_equal(ret, MOCK_OK);
-	assert_ptr_equal(check_data.ptr, data.ptr);
-	assert_int_equal(check_data.len, data.len);
+	assert_ptr_equal(check_data.ptr, MOCK_PRIVATE_DATA);
+	assert_int_equal(check_data.len, MOCK_PDATA_LEN);
 
 	/* configure mocks for rpma_conn_next_event() */
 	expect_value(rdma_get_cm_event, channel, MOCK_EVCH);
@@ -379,9 +372,6 @@ next_event__success_with_data_ESTABLISHED_with_data(void **cstate_ptr)
 
 	expect_value(rdma_ack_cm_event, event, &event);
 	will_return(rdma_ack_cm_event, MOCK_OK);
-
-	/* another data in the event */
-	will_return_maybe(rpma_private_data_store, MOCK_OK);
 
 	/* run test */
 	enum rpma_conn_event c_event = RPMA_CONN_UNDEFINED;
@@ -504,6 +494,31 @@ next_event__success_TIMEWAIT_EXIT(void **cstate_ptr)
 	assert_int_equal(c_event, RPMA_CONN_CLOSED);
 }
 
+/*
+ * next_event__success_REJECTED - happy day scenario
+ */
+static void
+next_event__success_REJECTED(void **cstate_ptr)
+{
+	struct conn_test_state *cstate = *cstate_ptr;
+
+	expect_value(rdma_get_cm_event, channel, MOCK_EVCH);
+	struct rdma_cm_event event;
+	event.event = RDMA_CM_EVENT_REJECTED;
+	will_return(rdma_get_cm_event, &event);
+
+	expect_value(rdma_ack_cm_event, event, &event);
+	will_return(rdma_ack_cm_event, MOCK_OK);
+
+	/* run test */
+	enum rpma_conn_event c_event = RPMA_CONN_UNDEFINED;
+	int ret = rpma_conn_next_event(cstate->conn, &c_event);
+
+	/* verify the results */
+	assert_int_equal(ret, MOCK_OK);
+	assert_int_equal(c_event, RPMA_CONN_REJECTED);
+}
+
 static const struct CMUnitTest tests_next_event[] = {
 	/* rpma_conn_next_event() unit tests */
 	cmocka_unit_test(next_event__conn_NULL),
@@ -512,19 +527,19 @@ static const struct CMUnitTest tests_next_event[] = {
 		setup__conn_new, teardown__conn_delete),
 	cmocka_unit_test(next_event__conn_NULL_event_NULL),
 	cmocka_unit_test_setup_teardown(
-		next_event__get_cm_event_EAGAIN,
+		next_event__get_cm_event_ERRNO,
 		setup__conn_new, teardown__conn_delete),
 	cmocka_unit_test_setup_teardown(
 		next_event__get_cm_event_ENODATA,
 		setup__conn_new, teardown__conn_delete),
 	cmocka_unit_test_setup_teardown(
-		next_event__event_REJECTED,
+		next_event__event_UNREACHABLE,
 		setup__conn_new, teardown__conn_delete),
 	cmocka_unit_test_setup_teardown(
-		next_event__event_REJECTED_ack_EINVAL,
+		next_event__event_UNREACHABLE_ack_ERRNO,
 		setup__conn_new, teardown__conn_delete),
 	cmocka_unit_test_setup_teardown(
-		next_event__data_store_ENOMEM,
+		next_event__data_store_E_NOMEM,
 		setup__conn_new, teardown__conn_delete),
 	cmocka_unit_test_setup_teardown(
 		next_event__success_no_data_ESTABLISHED_no_data,
@@ -549,6 +564,9 @@ static const struct CMUnitTest tests_next_event[] = {
 		setup__conn_new, teardown__conn_delete),
 	cmocka_unit_test_setup_teardown(
 		next_event__success_TIMEWAIT_EXIT,
+		setup__conn_new, teardown__conn_delete),
+	cmocka_unit_test_setup_teardown(
+		next_event__success_REJECTED,
 		setup__conn_new, teardown__conn_delete),
 	cmocka_unit_test(NULL)
 };

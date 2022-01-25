@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # SPDX-License-Identifier: BSD-3-Clause
-# Copyright 2020, Intel Corporation
+# Copyright 2020-2021, Intel Corporation
 
 #
 # set-ci-vars.sh -- set CI variables common for both:
@@ -9,6 +9,9 @@
 #
 
 set -e
+
+# set version of Docker images (IMG_VER)
+source $(dirname ${BASH_SOURCE[0]})/images/set-images-version.sh
 
 function get_commit_range_from_last_merge {
 	# get commit id of the last merge
@@ -87,6 +90,8 @@ export CI_BRANCH=$CI_BRANCH
 export CI_EVENT_TYPE=$CI_EVENT_TYPE
 export CI_REPO_SLUG=$CI_REPO_SLUG
 export CI_CPU_ARCH=$CI_CPU_ARCH
+export CI_SANITS=$CI_SANITS
+export IMG_VER=$IMG_VER
 
 echo CI_COMMIT=$CI_COMMIT
 echo CI_COMMIT_RANGE=$CI_COMMIT_RANGE
@@ -94,3 +99,5 @@ echo CI_BRANCH=$CI_BRANCH
 echo CI_EVENT_TYPE=$CI_EVENT_TYPE
 echo CI_REPO_SLUG=$CI_REPO_SLUG
 echo CI_CPU_ARCH=$CI_CPU_ARCH
+echo CI_SANITS=$CI_SANITS
+echo IMG_VER=$IMG_VER

@@ -1,6 +1,6 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
-# Copyright 2018-2020, Intel Corporation
+# Copyright 2018-2021, Intel Corporation
 #
 
 #
@@ -9,6 +9,7 @@
 
 set(TEST_ROOT_DIR ${PROJECT_SOURCE_DIR}/tests)
 set(TEST_UNIT_COMMON_DIR ${TEST_ROOT_DIR}/unit/common)
+set(TEST_MT_COMMON_DIR ${TEST_ROOT_DIR}/multithreaded/common)
 
 set(GLOBAL_TEST_ARGS
 	-DPERL_EXECUTABLE=${PERL_EXECUTABLE}
@@ -134,17 +135,6 @@ function(add_testcase name tracer testcase cmake_script)
 		set_tests_properties(${name}_${testcase}_${tracer} PROPERTIES
 				FAIL_REGULAR_EXPRESSION "CMake Error")
 	endif()
-
-	if (${tracer} STREQUAL pmemcheck)
-		set_tests_properties(${name}_${testcase}_${tracer} PROPERTIES
-				COST 100)
-	elseif(${tracer} IN_LIST vg_tracers)
-		set_tests_properties(${name}_${testcase}_${tracer} PROPERTIES
-				COST 50)
-	else()
-		set_tests_properties(${name}_${testcase}_${tracer} PROPERTIES
-				COST 10)
-	endif()
 endfunction()
 
 function(skip_test name message)
@@ -190,22 +180,33 @@ function(add_test_common name tracer testcase cmake_script)
 endfunction()
 
 function(add_test_generic)
-	set(oneValueArgs NAME CASE SCRIPT)
+	set(options GROUP_SCRIPT)
+	set(oneValueArgs NAME SCRIPT CASE)
 	set(multiValueArgs TRACERS)
-	cmake_parse_arguments(TEST "" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
+	cmake_parse_arguments(TEST "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
 
-	if("${TEST_SCRIPT}" STREQUAL "")
-		if("${TEST_CASE}" STREQUAL "")
-			set(TEST_CASE "0")
-			set(cmake_script ${CMAKE_CURRENT_SOURCE_DIR}/../../cmake/run_default.cmake)
-		else()
-			set(cmake_script ${CMAKE_CURRENT_SOURCE_DIR}/${TEST_NAME}_${TEST_CASE}.cmake)
-		endif()
+	if("${TEST_CASE}" STREQUAL "")
+		set(STR_TEST_CASE "")
 	else()
-		if("${TEST_CASE}" STREQUAL "")
-			set(TEST_CASE "0")
-		endif()
+		set(STR_TEST_CASE "_${TEST_CASE}")
+	endif()
+
+	if(NOT "${TEST_SCRIPT}" STREQUAL "")
+		# SCRIPT is set
 		set(cmake_script ${CMAKE_CURRENT_SOURCE_DIR}/${TEST_SCRIPT})
+	elseif(TEST_GROUP_SCRIPT)
+		# GROUP_SCRIPT is set
+		set(cmake_script ${CMAKE_CURRENT_SOURCE_DIR}/../run_group${STR_TEST_CASE}.cmake)
+	elseif(NOT "${TEST_CASE}" STREQUAL "")
+		# CASE is set
+		set(cmake_script ${CMAKE_CURRENT_SOURCE_DIR}/${TEST_NAME}${STR_TEST_CASE}.cmake)
+	else()
+		# none of: SCRIPT nor GROUP_SCRIPT nor CASE is set
+		set(cmake_script ${CMAKE_CURRENT_SOURCE_DIR}/../../cmake/run_default.cmake)
+	endif()
+
+	if("${TEST_CASE}" STREQUAL "")
+		set(TEST_CASE "0") # TEST_CASE is required by add_test_common()
 	endif()
 
 	if("${TEST_TRACERS}" STREQUAL "")
@@ -215,4 +216,34 @@ function(add_test_generic)
 			add_test_common(${TEST_NAME} ${tracer} ${TEST_CASE} ${cmake_script})
 		endforeach()
 	endif()
+endfunction()
+
+function(add_multithreaded)
+	set(options USE_LIBIBVERBS)
+	set(oneValueArgs NAME BIN)
+	set(multiValueArgs SRCS)
+	cmake_parse_arguments(MULTITHREADED
+		"${options}"
+		"${oneValueArgs}"
+		"${multiValueArgs}"
+		${ARGN})
+
+	set(target multithreaded-${MULTITHREADED_NAME}-${MULTITHREADED_BIN})
+
+	prepend(srcs ${CMAKE_CURRENT_SOURCE_DIR} ${srcs})
+	add_executable(${target} ${TEST_MT_COMMON_DIR}/mtt.c
+		${MULTITHREADED_SRCS})
+	target_include_directories(${target} PRIVATE
+		${TEST_MT_COMMON_DIR} ${LIBRPMA_INCLUDE_DIRS})
+	set_target_properties(${target} PROPERTIES
+		OUTPUT_NAME ${MULTITHREADED_BIN})
+	target_link_libraries(${target} ${LIBRPMA_LIBRARIES} pthread)
+
+	if(MULTITHREADED_USE_LIBIBVERBS)
+		target_include_directories(${target}
+			PRIVATE ${LIBIBVERBS_INCLUDE_DIRS})
+		target_link_libraries(${target} ${LIBIBVERBS_LIBRARIES})
+	endif()
+
+	add_test_generic(NAME ${target} GROUP_SCRIPT TRACERS none drd helgrind)
 endfunction()
