@@ -16,7 +16,7 @@ Build-Depends: debhelper-compat (= 13),
 	libpmem2-dev,
 	valgrind [!riscv64],
 	pylint,
-Standards-Version: 4.5.0
+Standards-Version: 4.6.0
 Section: libs
 Homepage: https://github.com/pmem/rpma
 Vcs-Browser: https://github.com/kilobyte/rpma
