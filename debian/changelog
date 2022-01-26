@@ -1,3 +1,13 @@
+rpma (0.10.0-1) experimental; urgency=medium
+
+  * New upstream release.
+  * Disable RoCE tests.
+  * Add new B-Deps.
+  * Enable riscv64.
+  * Add a watch file.
+
+ -- Adam Borowski <kilobyte@angband.pl>  Wed, 26 Jan 2022 08:49:33 +0100
+
 rpma (0.9.0-1) experimental; urgency=medium
 
   * Initial release (Closes: #971512)
