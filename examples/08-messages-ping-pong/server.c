@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
-/* Copyright 2020-2021, Intel Corporation */
-/* Copyright 2021, Fujitsu */
+/* Copyright 2020-2022, Intel Corporation */
+/* Copyright 2021-2022, Fujitsu */
 
 /*
  * server.c -- a server of the messages-ping-pong example
@@ -12,7 +12,6 @@
 #include <librpma.h>
 #include <stdlib.h>
 #include <stdio.h>
-#include <sys/epoll.h>
 #include <unistd.h>
 
 #define USAGE_STR "usage: %s <server_address> <port>\n"
@@ -55,7 +54,6 @@ main(int argc, char *argv[])
 	struct rpma_conn_req *req = NULL;
 	enum rpma_conn_event conn_event = RPMA_CONN_UNDEFINED;
 	struct rpma_conn *conn = NULL;
-	struct rpma_completion cmpl;
 
 	/*
 	 * lookup an ibv_context via the address and create a new peer using it
@@ -109,55 +107,14 @@ main(int argc, char *argv[])
 	if ((ret = rpma_conn_get_cq(conn, &cq)))
 		goto err_conn_disconnect;
 
-	/* RPMA_OP_SEND completion in the first round is not present */
+	/* IBV_WC_SEND completion in the first round is not present */
 	int send_cmpl = 1;
 	int recv_cmpl = 0;
 
 	while (1) {
-		do {
-			/* prepare completions, get one and validate it */
-			ret = rpma_cq_get_completion(cq, &cmpl);
-			if (ret && ret != RPMA_E_NO_COMPLETION)
-				break;
-
-			if (ret == RPMA_E_NO_COMPLETION) {
-				if ((ret = rpma_cq_wait(cq))) {
-					break;
-				} else if ((ret = rpma_cq_get_completion(cq,
-						&cmpl))) {
-					if (ret == RPMA_E_NO_COMPLETION)
-						continue;
-					break;
-				}
-			}
-
-			if (cmpl.op_status != IBV_WC_SUCCESS) {
-				(void) fprintf(stderr,
-					"rpma_send()/rpma_recv() failed: %s\n",
-					ibv_wc_status_str(cmpl.op_status));
-				ret = -1;
-				break;
-			}
-
-			if (cmpl.op == RPMA_OP_SEND) {
-				send_cmpl = 1;
-			} else if (cmpl.op == RPMA_OP_RECV) {
-				if (cmpl.op_context != recv ||
-						cmpl.byte_len != MSG_SIZE) {
-					(void) fprintf(stderr,
-						"received completion is not as expected (%p != %p [cmpl.op_context] || %"
-						PRIu32
-						" != %ld [cmpl.byte_len] )\n",
-						cmpl.op_context, (void *)recv,
-						cmpl.byte_len, MSG_SIZE);
-					ret = -1;
-					break;
-				}
-
-				recv_cmpl = 1;
-			}
-		} while (!send_cmpl || !recv_cmpl);
-
+		/* get completions and process them */
+		ret = wait_and_process_completions(cq, recv, &send_cmpl,
+				&recv_cmpl);
 		if (ret)
 			break;
 
