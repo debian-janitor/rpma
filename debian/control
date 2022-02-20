@@ -14,7 +14,7 @@ Build-Depends: debhelper-compat (= 13),
 	libunwind-dev [!riscv64],
 	libpmem-dev,
 	libpmem2-dev,
-	valgrind [!riscv64],
+	valgrind-if-available,
 	pylint,
 Standards-Version: 4.6.0
 Section: libs
