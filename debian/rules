@@ -1,8 +1,7 @@
 #!/usr/bin/make -f
 #export DH_VERBOSE = 1
 
-# FIXME: remove -fortify once log_default-function_0_none is fixed
-export DEB_BUILD_MAINT_OPTIONS = hardening=+all,-fortify
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all
 export DEB_CFLAGS_MAINT_APPEND  = -Wall -pedantic
 
 
