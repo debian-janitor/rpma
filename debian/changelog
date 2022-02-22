@@ -1,3 +1,12 @@
+rpma (0.12.0-1) experimental; urgency=medium
+
+  * New upstream release.
+  * Reenable +fortify.
+  * B-Depend on valgrind-if-available.
+  * Drop the symbols file for now.
+
+ -- Adam Borowski <kilobyte@angband.pl>  Tue, 22 Feb 2022 14:26:02 +0100
+
 rpma (0.11.0-1) experimental; urgency=medium
 
   * New upstream release.
