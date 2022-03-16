@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.0] - 2022-03-15
+### Added
+- APIs:
+  - RPMA_CONN_UNREACHABLE enum rpma_conn_event to handle RDMA_CM_EVENT_UNREACHABLE
+
+### Fixed
+- APIs:
+  - rpma_log_init - cannot fail to set the default log function now
+- unit tests of rpma_log_set_threshold and RPMA_LOG_* macros
+
+### Removed
+- APIs:
+  - rpma_write_atomic - replaced with rpma_atomic_write
+
 ## [0.13.0] - 2022-03-09
 ### Added
 - APIs:
