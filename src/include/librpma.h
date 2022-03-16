@@ -455,7 +455,7 @@ enum rpma_util_ibv_context_type {
  *
  *	int rpma_utils_get_ibv_context(const char *addr,
  *		enum rpma_util_ibv_context_type type,
- *		struct ibv_context **dev_ptr);
+ *		struct ibv_context **ibv_ctx_ptr);
  *
  * DESCRIPTION
  * rpma_utils_get_ibv_context() obtains an RDMA device context
@@ -470,13 +470,13 @@ enum rpma_util_ibv_context_type {
  *
  * RETURN VALUE
  * The rpma_utils_get_ibv_context() function returns 0 on success or a negative
- * error code on failure. rpma_utils_get_ibv_context() does not set *dev_ptr
- * value on failure.
+ * error code on failure.
+ * rpma_utils_get_ibv_context() does not set *ibv_ctx_ptr value on failure.
  *
  * ERRORS
  * rpma_utils_get_ibv_context() can fail with the following errors:
  *
- * - RPMA_E_INVAL - addr or dev_ptr is NULL or type is unknown
+ * - RPMA_E_INVAL - addr or ibv_ctx_ptr is NULL or type is unknown
  * - RPMA_E_NOMEM - out of memory
  * - RPMA_E_PROVIDER - rdma_getaddrinfo(), rdma_create_id(), rdma_bind_addr()
  * or rdma_resolve_addr() failed, the exact cause of the error
@@ -488,7 +488,7 @@ enum rpma_util_ibv_context_type {
  */
 int rpma_utils_get_ibv_context(const char *addr,
 		enum rpma_util_ibv_context_type type,
-		struct ibv_context **dev_ptr);
+		struct ibv_context **ibv_ctx_ptr);
 
 /** 3
  * rpma_utils_ibv_context_is_odp_capable - is On-Demand Paging supported
@@ -498,7 +498,7 @@ int rpma_utils_get_ibv_context(const char *addr,
  *	#include <librpma.h>
  *
  *	struct ibv_context;
- *	int rpma_utils_ibv_context_is_odp_capable(struct ibv_context *dev,
+ *	int rpma_utils_ibv_context_is_odp_capable(struct ibv_context *ibv_ctx,
  *		int *is_odp_capable);
  *
  * DESCRIPTION
@@ -513,14 +513,14 @@ int rpma_utils_get_ibv_context(const char *addr,
  * ERRORS
  * rpma_utils_ibv_context_is_odp_capable() can fail with the following errors:
  *
- * - RPMA_E_INVAL - dev or is_odp_capable is NULL
+ * - RPMA_E_INVAL - ibv_ctx or is_odp_capable is NULL
  * - RPMA_E_PROVIDER - ibv_query_device_ex() failed, the exact cause
  * of the error can be read from the log
  *
  * SEE ALSO
  * rpma_utils_get_ibv_context(3), librpma(7) and https://pmem.io/rpma/
  */
-int rpma_utils_ibv_context_is_odp_capable(struct ibv_context *dev,
+int rpma_utils_ibv_context_is_odp_capable(struct ibv_context *ibv_ctx,
 		int *is_odp_capable);
 
 /* peer configuration */
@@ -1615,9 +1615,9 @@ int rpma_conn_get_event_fd(const struct rpma_conn *conn, int *fd);
 enum rpma_conn_event {
 	RPMA_CONN_UNDEFINED = -1,	/* Undefined connection event */
 	RPMA_CONN_ESTABLISHED,		/* Connection established */
-	RPMA_CONN_CLOSED,			/* Connection closed */
-	RPMA_CONN_LOST,				/* Connection lost */
-	RPMA_CONN_REJECTED			/* Connection rejected */
+	RPMA_CONN_CLOSED,		/* Connection closed */
+	RPMA_CONN_LOST,			/* Connection lost */
+	RPMA_CONN_REJECTED		/* Connection rejected */
 };
 
 /** 3
@@ -1675,11 +1675,12 @@ int rpma_conn_next_event(struct rpma_conn *conn, enum rpma_conn_event *event);
  *
  *	const char *rpma_utils_conn_event_2str(enum rpma_conn_event conn_event);
  *
- *	enum rpma_conn_event{
+ *	enum rpma_conn_event {
  *		RPMA_CONN_UNDEFINED = -1,
  *		RPMA_CONN_ESTABLISHED,
  *		RPMA_CONN_CLOSED,
- *		RPMA_CONN_LOST
+ *		RPMA_CONN_LOST,
+ *		RPMA_CONN_REJECTED
  *	};
  *
  * DESCRIPTION
@@ -2439,7 +2440,7 @@ int rpma_write_with_imm(struct rpma_conn *conn,
 #define RPMA_ATOMIC_WRITE_ALIGNMENT 8
 
 /** 3
- * rpma_write_atomic - initiate the atomic write operation
+ * rpma_write_atomic - initiate the atomic write operation (deprecated)
  *
  * SYNOPSIS
  *
@@ -2478,6 +2479,29 @@ int rpma_write_with_imm(struct rpma_conn *conn,
  * - RPMA_E_INVAL - flags are not set
  * - RPMA_E_PROVIDER - ibv_post_send(3) failed
  *
+ * DEPRECATED
+ * This API call should be replaced with rpma_atomic_write().
+ * This is an example snippet of code using the old API:
+ *
+ *	struct rpma_conn *conn;
+ *	struct rpma_mr_remote *dst;
+ *	struct rpma_mr_local *src;
+ *
+ *	ret = rpma_write_atomic(conn, dst, dst_offset, src, src_offset,
+ *		RPMA_F_COMPLETION_ON_ERROR, NULL)
+ *	if (ret) { error_handling_code() }
+ *
+ * The above snippet should be replaced with
+ * the following one using the new API:
+ *
+ *	struct rpma_conn *conn;
+ *	struct rpma_mr_remote *dst;
+ *	char src[8];
+ *
+ *	ret = rpma_atomic_write(conn, dst, dst_offset, src,
+ *		RPMA_F_COMPLETION_ON_ERROR, NULL)
+ *	if (ret) { error_handling_code() }
+ *
  * SEE ALSO
  * rpma_conn_req_connect(3), rpma_mr_reg(3),
  * rpma_mr_remote_from_descriptor(3), librpma(7) and https://pmem.io/rpma/
@@ -2486,6 +2510,52 @@ int rpma_write_atomic(struct rpma_conn *conn,
 		struct rpma_mr_remote *dst, size_t dst_offset,
 		const struct rpma_mr_local *src,  size_t src_offset,
 		int flags, const void *op_context);
+
+/** 3
+ * rpma_atomic_write -- initiate the atomic 8 bytes write operation
+ *
+ * SYNOPSIS
+ *
+ *	#include <librpma.h>
+ *
+ *	struct rpma_conn;
+ *	struct rpma_mr_remote;
+ *	int rpma_atomic_write(struct rpma_conn *conn,
+ *			struct rpma_mr_remote *dst, size_t dst_offset,
+ *			const char src[8], int flags, const void *op_context);
+ *
+ * DESCRIPTION
+ * rpma_atomic_write() initiates the atomic 8 bytes write operation
+ * (transferring data from the local memory to the remote memory).
+ * The atomic write operation allows transferring exactly 8 bytes of data
+ * and storing them atomically in the remote memory.
+ *
+ * The attribute flags set the completion notification indicator:
+ * - RPMA_F_COMPLETION_ON_ERROR - generate the completion on error
+ * - RPMA_F_COMPLETION_ALWAYS - generate the completion regardless of result of
+ * the operation.
+ *
+ * op_context is returned in the wr_id field of the completion (struct ibv_wc).
+ *
+ * RETURN VALUE
+ * The rpma_atomic_write() function returns 0 on success or a negative
+ * error code on failure.
+ *
+ * ERRORS
+ * rpma_atomic_write() can fail with the following errors:
+ *
+ * - RPMA_E_INVAL - conn, dst or src is NULL
+ * - RPMA_E_INVAL - dst_offset is not aligned to 8 bytes
+ * - RPMA_E_INVAL - flags are not set (flags == 0)
+ * - RPMA_E_PROVIDER - ibv_post_send(3) failed
+ *
+ * SEE ALSO
+ * rpma_conn_req_connect(3), rpma_mr_reg(3),
+ * rpma_mr_remote_from_descriptor(3), librpma(7) and https://pmem.io/rpma/
+ */
+int rpma_atomic_write(struct rpma_conn *conn,
+	struct rpma_mr_remote *dst, size_t dst_offset,
+	const char src[8], int flags, const void *op_context);
 
 /*
  * possible types of rpma_flush() operation

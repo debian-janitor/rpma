@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.0] - 2022-03-09
+### Added
+- APIs:
+  - rpma_atomic_write - initiates the atomic 8 bytes write operation
+
+### Changed
+- ibv_qp_cap.max_inline_data set to 8 bytes to allow implementation of atomic write over ibv_post_send with IBV_SEND_INLINE
+- example 07 uses rpma_atomic_write() instead of rpma_write_atomic()
+
+### Deprecated
+- API:
+  - rpma_write_atomic - replaced with rpma_atomic_write
+
+### Fixed
+- the part_write.json template in the benchmarking framework
+- documentation of rpma_utils_conn_event_2str()
+
 ## [0.12.0] - 2022-02-21
 ### Fixed
 - links to https://pmem.io in the benchmarking framework

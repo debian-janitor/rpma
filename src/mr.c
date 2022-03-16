@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BSD-3-Clause
-/* Copyright 2020-2021, Intel Corporation */
+/* Copyright 2020-2022, Intel Corporation */
 /* Copyright (c) 2021 Fujitsu */
 
 /*
@@ -178,6 +178,55 @@ rpma_mr_write(struct ibv_qp *qp,
 			"ibv_post_send(dst_addr=0x%x, rkey=0x%x, src_addr=0x%x, length=%u, lkey=0x%x, wr_id=0x%x, opcode=IBV_WR_RDMA_WRITE, send_flags=%s)",
 			wr.wr.rdma.remote_addr, wr.wr.rdma.rkey,
 			sge.addr, sge.length, sge.lkey, wr.wr_id,
+			(flags & RPMA_F_COMPLETION_ON_SUCCESS) ?
+				"IBV_SEND_SIGNALED" : "0");
+		return RPMA_E_PROVIDER;
+	}
+
+	return 0;
+}
+
+/*
+ * rpma_mr_atomic_write -- post the atomic 8 bytes RDMA write from src to dst
+ */
+int
+rpma_mr_atomic_write(struct ibv_qp *qp,
+	struct rpma_mr_remote *dst, size_t dst_offset,
+	const char src[8], int flags, const void *op_context)
+{
+	struct ibv_send_wr wr;
+	struct ibv_sge sge;
+
+	/* source */
+	sge.addr = (uint64_t)((uintptr_t)src);
+	sge.length = 8; /* 8-bytes atomic write with IBV_SEND_INLINE flag */
+	wr.sg_list = &sge;
+	wr.num_sge = 1;
+
+	/* destination */
+	wr.wr.rdma.remote_addr = dst->raddr + dst_offset;
+	wr.wr.rdma.rkey = dst->rkey;
+
+	wr.wr_id = (uint64_t)op_context;
+	wr.next = NULL;
+	wr.opcode = IBV_WR_RDMA_WRITE;
+
+	/*
+	 * IBV_SEND_FENCE is used here to force any ongoing read operation
+	 * (that may emulate a remote flush) to be finished before
+	 * the atomic write is executed.
+	 */
+	wr.send_flags = IBV_SEND_INLINE | IBV_SEND_FENCE;
+	if (flags & RPMA_F_COMPLETION_ON_SUCCESS)
+		wr.send_flags |= IBV_SEND_SIGNALED;
+
+	struct ibv_send_wr *bad_wr;
+	int ret = ibv_post_send(qp, &wr, &bad_wr);
+	if (ret) {
+		RPMA_LOG_ERROR_WITH_ERRNO(ret,
+			"ibv_post_send(dst_addr=0x%x, rkey=0x%x, src_addr=0x%x, wr_id=0x%x, opcode=IBV_WR_RDMA_WRITE, send_flags=%s)",
+			wr.wr.rdma.remote_addr, wr.wr.rdma.rkey,
+			sge.addr, wr.wr_id,
 			(flags & RPMA_F_COMPLETION_ON_SUCCESS) ?
 				"IBV_SEND_SIGNALED" : "0");
 		return RPMA_E_PROVIDER;
