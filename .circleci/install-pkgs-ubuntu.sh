@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # SPDX-License-Identifier: BSD-3-Clause
-# Copyright 2021, Intel Corporation
+# Copyright 2021-2022, Intel Corporation
 #
 
 #
@@ -36,27 +36,34 @@ RPMA_DEPS="\
 	gawk \
 	groff \
 	graphviz \
-	ibverbs-providers-dbgsym \
 	libibverbs-dev \
-	libibverbs1-dbgsym \
 	librdmacm-dev \
-	librdmacm1-dbgsym \
 	libunwind-dev \
 	linux-modules-extra-$(uname -r) \
 	pandoc"
 
+export DEBIAN_FRONTEND=noninteractive
+
 # Update existing packages
-sudo apt-get update
+sudo apt-get update --allow-unauthenticated
 
-# Enable repositories with debug symbols packages (-dbgsym)
-sudo apt-get install --assume-yes --no-install-recommends lsb-release ubuntu-dbgsym-keyring
-echo "deb http://ddebs.ubuntu.com $(lsb_release -cs) main restricted universe multiverse
-deb http://ddebs.ubuntu.com $(lsb_release -cs)-updates main restricted universe multiverse
-deb http://ddebs.ubuntu.com $(lsb_release -cs)-proposed main restricted universe multiverse" | \
+# update list of sources
+MIRROR="http://ddebs.ubuntu.com"
+echo "
+deb $MIRROR $(lsb_release -cs) main restricted universe multiverse
+deb $MIRROR $(lsb_release -cs)-updates main restricted universe multiverse
+deb $MIRROR $(lsb_release -cs)-proposed main restricted universe multiverse" | \
 	sudo tee -a /etc/apt/sources.list.d/ddebs.list
-sudo apt-get update
 
-sudo apt-get install --assume-yes --no-install-recommends \
+# import missing GPG keys:
+sudo apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys C8CAB6595FDFF622
+sudo apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys 536F8F1DE80F6A35
+
+# Update existing packages once again
+sudo apt-get update --allow-unauthenticated
+
+# Install new packages
+sudo apt-get install --assume-yes --no-install-recommends --allow-unauthenticated \
 	$BASE_DEPS \
 	$EXAMPLES_DEPS \
 	$TOOLS_DEPS \

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
-/* Copyright 2020, Intel Corporation */
-/* Copyright 2021, Fujitsu */
+/* Copyright 2020-2022, Intel Corporation */
+/* Copyright 2021-2022, Fujitsu */
 
 /*
  * mocks-rdma_cm.c -- librdmacm mocks
@@ -15,8 +15,9 @@
 #include "mocks-rdma_cm.h"
 #include "test-common.h"
 
-struct rdma_event_channel Evch; /* mock event channel */
-struct rdma_cm_id Cm_id;	/* mock CM ID */
+struct rdma_event_channel Evch;		/* mock event channel */
+struct rdma_cm_id Cm_id;		/* mock CM ID */
+struct ibv_sa_path_rec Path_rec;	/* mock ibv_sa_path_rec */
 
 /*
  * Rdma_migrate_id_counter -- counter of calls to rdma_migrate_id() which allows
@@ -42,7 +43,7 @@ rdma_create_qp(struct rdma_cm_id *id, struct ibv_pd *pd,
 	check_expected(qp_init_attr->qp_context);
 	check_expected(qp_init_attr->send_cq);
 	check_expected(qp_init_attr->recv_cq);
-	assert_null(qp_init_attr->srq);
+	check_expected(qp_init_attr->srq);
 	check_expected(qp_init_attr->cap.max_send_wr);
 	check_expected(qp_init_attr->cap.max_recv_wr);
 	check_expected(qp_init_attr->cap.max_send_sge);
@@ -187,8 +188,6 @@ rdma_connect(struct rdma_cm_id *id, struct rdma_conn_param *conn_param)
 {
 	check_expected(id);
 	assert_non_null(conn_param);
-	assert_null(conn_param->private_data);
-	assert_int_equal(conn_param->private_data_len, 0);
 	assert_int_equal(conn_param->responder_resources, RDMA_MAX_RESP_RES);
 	assert_int_equal(conn_param->initiator_depth, RDMA_MAX_INIT_DEPTH);
 	assert_int_equal(conn_param->flow_control, 1);

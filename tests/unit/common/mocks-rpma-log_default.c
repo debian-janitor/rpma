@@ -16,7 +16,7 @@ rpma_log_default_function(enum rpma_log_level level, const char *file_name,
 	const int line_no, const char *function_name,
 	const char *message_format, ...)
 {
-
+	function_called();
 }
 
 /*
@@ -38,8 +38,7 @@ rpma_log_default_fini(void)
 }
 
 int
-mock__sync_bool_compare_and_swap__function(rpma_log_function **ptr,
-	rpma_log_function *oldval, rpma_log_function *newval)
+mock__sync_bool_compare_and_swap__function(uintptr_t *ptr, uintptr_t oldval, uintptr_t newval)
 {
 	static int run_orig = 1;
 	run_orig = run_orig ? 0 : 1;

@@ -1,11 +1,13 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
-# Copyright 2018-2021, Intel Corporation
+# Copyright 2018-2022, Intel Corporation
 #
 
 #
 # functions.cmake - helper functions for CMakeLists.txt
 #
+
+include(CheckCCompilerFlag)
 
 # prepends prefix to list of strings
 function(prepend var prefix)
@@ -181,15 +183,28 @@ function(find_pmemcheck)
 	endif()
 endfunction()
 
+function(valgrind_check_s_option)
+	set(ENV{PATH} ${VALGRIND_PREFIX}/bin:$ENV{PATH})
+	execute_process(COMMAND valgrind -s date
+			ERROR_VARIABLE VALGRIND_S_OPTION_STDERR
+			OUTPUT_QUIET)
+	string(REGEX MATCH "Unknown option: -s" VALGRIND_S_OPTION_MATCH "${VALGRIND_S_OPTION_STDERR}")
+	if(VALGRIND_S_OPTION_MATCH)
+		set(VALGRIND_S_OPTION "" CACHE INTERNAL "")
+		message(STATUS "valgrind -s option is not supported")
+	else()
+		set(VALGRIND_S_OPTION "-s" CACHE INTERNAL "")
+		message(STATUS "valgrind -s option is supported")
+	endif()
+endfunction()
+
 # check if libibverbs has ODP support
 function(is_ODP_supported var)
 	CHECK_C_SOURCE_COMPILES("
 		#include <infiniband/verbs.h>
 		/* check if 'IBV_ACCESS_ON_DEMAND is defined */
 		int main() {
-			if (!IBV_ACCESS_ON_DEMAND)
-				return -1;
-			return 0;
+			return IBV_ACCESS_ON_DEMAND;
 		}"
 		ON_DEMAND_PAGING_SUPPORTED)
 	set(var ${ON_DEMAND_PAGING_SUPPORTED} PARENT_SCOPE)
@@ -201,12 +216,28 @@ function(is_ibv_advise_mr_supported var)
 		#include <infiniband/verbs.h>
 		/* check if ibv_advise_mr() is defined */
 		int main() {
-			if (!ibv_advise_mr)
-				return -1;
-			return 0;
+			return !ibv_advise_mr;
 		}"
 		IBV_ADVISE_MR_SUPPORTED)
 	set(var ${IBV_ADVISE_MR_SUPPORTED} PARENT_SCOPE)
+endfunction()
+
+# check if libibverbs has ibv_advise_mr() support
+function(are_ibv_advise_flags_supported var)
+	CHECK_C_SOURCE_COMPILES("
+		#include <infiniband/verbs.h>
+		/* check if all required IBV_ADVISE_MR* flags are supported */
+		int main() {
+			return IBV_ADVISE_MR_ADVICE_PREFETCH_WRITE | IBV_ADVISE_MR_FLAG_FLUSH;
+		}"
+		IBV_ADVISE_MR_FLAGS_SUPPORTED)
+	if(IBV_ADVISE_MR_FLAGS_SUPPORTED)
+		message(STATUS "All required IBV_ADVISE_MR* flags are supported")
+	else()
+		message(WARNING "Required IBV_ADVISE_MR_ADVICE_PREFETCH_WRITE or IBV_ADVISE_MR_FLAG_FLUSH flags are NOT supported. "
+				"rpma_mr_advise() will not be called in the examples.")
+	endif()
+	set(var ${IBV_ADVISE_MR_FLAGS_SUPPORTED} PARENT_SCOPE)
 endfunction()
 
 # check if librdmacm has correct signature of rdma_getaddrinfo()
@@ -232,9 +263,7 @@ function(check_signature_rdma_getaddrinfo var)
 				const char *service;
 				const struct rdma_addrinfo *hints;
 				struct rdma_addrinfo **res;
-				if (rdma_getaddrinfo(node, service, hints, res))
-					return -1;
-				return 0;
+				return rdma_getaddrinfo(node, service, hints, res);
 			}"
 			RDMA_GETADDRINFO_NEW_SIGNATURE)
 		set(var ${RDMA_GETADDRINFO_NEW_SIGNATURE} PARENT_SCOPE)
@@ -273,4 +302,20 @@ function(check_if_librt_is_required)
 	if(${LDD_VERSION} VERSION_LESS ${MINIMUM_GLIBC_VERSION})
 		set(LIBRT_LIBRARIES "rt" PARENT_SCOPE) # librt
 	endif()
+endfunction()
+
+# check if atomic operations are supported
+function(atomic_operations_supported var)
+	CHECK_C_SOURCE_COMPILES("
+		#include <stdatomic.h>
+		/* check if atomic operations are supported */
+		int main() {
+			_Atomic int i, j;
+			atomic_init(&i, 0);
+			j = atomic_load_explicit(&i, __ATOMIC_SEQ_CST);
+			atomic_store_explicit(&i, 1, __ATOMIC_SEQ_CST);
+			return 0;
+		}"
+		ATOMIC_OPERATIONS_SUPPORTED)
+	set(var ${ATOMIC_OPERATIONS_SUPPORTED} PARENT_SCOPE)
 endfunction()

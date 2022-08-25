@@ -12,6 +12,7 @@
 #define MTT
 
 #include <stddef.h>
+#include <stdbool.h>
 
 #define KILOBYTE 1024
 
@@ -46,34 +47,47 @@ const char *mtt_base_file_name(const char *file_name);
 
 void *mtt_malloc_aligned(size_t size, struct mtt_result *tr);
 
-/* on server's error print the error message to stderr */
-#define SERVER_ERR_MSG(msg) \
+/* on child's error print the error message to stderr */
+#define CHILD_ERR_MSG(child_name, msg) \
 	do { \
-		fprintf(stderr, "[SERVER] %s:%d %s() -> %s\n", \
-			mtt_base_file_name(__FILE__), __LINE__, __func__, \
-			msg); \
+		fprintf(stderr, "%s %s:%d %s() -> %s\n", \
+			child_name, mtt_base_file_name(__FILE__), \
+			__LINE__, __func__, msg); \
 	} while (0)
 
-#define SERVER_RPMA_ERR(func, err) \
+#define CHILD_ERR(child_name, func, msg) \
 	do { \
-		fprintf(stderr, "[SERVER] %s:%d %s() -> %s() failed: %s\n", \
-			mtt_base_file_name(__FILE__), __LINE__, __func__, \
-			func, rpma_err_2str(err)); \
+		fprintf(stderr, "%s %s:%d %s() -> %s() failed: %s\n", \
+			child_name, mtt_base_file_name(__FILE__), \
+			__LINE__, __func__, func, msg); \
 	} while (0)
+
+#define CHILD_RPMA_ERR(child_name, func, err) \
+	CHILD_ERR(child_name, func, rpma_err_2str(err))
+
+#define SERVER_ERR_MSG(msg)		CHILD_ERR_MSG("[SERVER]", msg)
+#define SERVER_RPMA_ERR(func, err)	CHILD_RPMA_ERR("[SERVER]", func, err)
 
 /* on error populate the result and the error message */
-#define MTT_ERR_MSG(result, msg, err) \
+#define MTT_ERR_MSG(result, msg, err, ...) \
 	do { \
+		if ((result) == NULL) \
+			break; \
+		char msg_buf[MTT_ERRMSG_MAX / 2]; \
+		snprintf(msg_buf, MTT_ERRMSG_MAX / 2 - 1, \
+			msg, ##__VA_ARGS__); \
 		(result)->ret = err; \
 		snprintf((result)->errmsg, MTT_ERRMSG_MAX - 1, \
 			"%s:%d %s() -> %s\n", \
 			mtt_base_file_name(__FILE__), __LINE__, __func__, \
-			msg); \
+			msg_buf); \
 	} while (0)
 
 /* on error populate the result and the error string */
 #define MTT_ERR(result, func, err) \
 	do { \
+		if ((result) == NULL) \
+			break; \
 		(result)->ret = err; \
 		snprintf((result)->errmsg, MTT_ERRMSG_MAX - 1, \
 			"%s:%d %s() -> %s() failed: %s\n", \
@@ -84,6 +98,8 @@ void *mtt_malloc_aligned(size_t size, struct mtt_result *tr);
 /* on librpma error populate the result and the error string */
 #define MTT_RPMA_ERR(result, func, err) \
 	do { \
+		if ((result) == NULL) \
+			break; \
 		(result)->ret = err; \
 		snprintf((result)->errmsg, MTT_ERRMSG_MAX - 1, \
 			"%s:%d %s() -> %s() failed: %s\n", \
@@ -159,6 +175,17 @@ typedef void (*mtt_thread_func)(unsigned id, void *prestate, void *state,
  */
 typedef int (*mtt_child_process_func)(void *prestate);
 
+/*
+ * mtt_start_child - define a time when the child process is started
+ */
+enum mtt_start_child {
+	MTT_START_CHILD_BEFORE_PRESTATE_INIT_FUNC,
+	MTT_START_CHILD_BEFORE_THREAD_SEQ_INIT_FUNC,
+	MTT_START_CHILD_BEFORE_THREAD_INIT_FUNC,
+	MTT_START_CHILD_BEFORE_THREAD_FUNC,
+	MTT_START_CHILD_BEFORE_JOINING_THREADS
+};
+
 struct mtt_test {
 	/*
 	 * a pointer to test-provided data passed on all initialization steps
@@ -214,6 +241,11 @@ struct mtt_test {
 	 * A pointer to test-provided data passed to the child process function.
 	 */
 	void *child_prestate;
+
+	/*
+	 * Set a time when the child process should be started.
+	 */
+	enum mtt_start_child child_start;
 };
 
 int mtt_run(struct mtt_test *test, unsigned threads_num);

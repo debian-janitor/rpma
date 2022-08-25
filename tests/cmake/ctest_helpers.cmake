@@ -1,6 +1,6 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
-# Copyright 2018-2021, Intel Corporation
+# Copyright 2018-2022, Intel Corporation
 #
 
 #
@@ -18,7 +18,7 @@ set(GLOBAL_TEST_ARGS
 	-DTESTS_USE_FORCED_PMEM=${TESTS_USE_FORCED_PMEM}
 	-DTEST_ROOT_DIR=${TEST_ROOT_DIR})
 
-if(TRACE_TESTS)
+if(TESTS_VERBOSE_OUTPUT)
 	set(GLOBAL_TEST_ARGS ${GLOBAL_TEST_ARGS} --trace-expand)
 endif()
 
@@ -42,18 +42,9 @@ endfunction()
 
 function(find_packages)
 	pkg_check_modules(CMOCKA REQUIRED cmocka)
-	pkg_check_modules(LIBUNWIND QUIET libunwind)
 
 	if(NOT CMOCKA_FOUND)
 		message(FATAL_ERROR "Cmocka not found. Cmocka is required to run tests.")
-	endif()
-
-	if(NOT LIBUNWIND_FOUND)
-		message(WARNING "libunwind-dev/devel not found. Stack traces from tests will not be reliable")
-	endif()
-
-	if(TESTS_USE_VALGRIND AND NOT VALGRIND_FOUND)
-		message(WARNING "Valgrind not found. Valgrind tests will not be performed.")
 	endif()
 endfunction()
 
@@ -73,11 +64,8 @@ function(build_test_lib name)
 	prepend(srcs ${CMAKE_CURRENT_SOURCE_DIR} ${srcs})
 
 	add_executable(${name} ${srcs})
-	target_link_libraries(${name} rpma cmocka test_backtrace)
+	target_link_libraries(${name} rpma cmocka)
 	target_include_directories(${name} PRIVATE ${LIBRPMA_INCLUDE_DIRS})
-	if(LIBUNWIND_FOUND)
-		target_link_libraries(${name} ${LIBUNWIND_LIBRARIES} ${CMAKE_DL_LIBS})
-	endif()
 
 	add_dependencies(tests ${name})
 endfunction()
@@ -101,10 +89,7 @@ function(build_test_src)
 			${TEST_UNIT_COMMON_DIR})
 	endif()
 	# do not link with the rpma library
-	target_link_libraries(${TEST_NAME} cmocka test_backtrace)
-	if(LIBUNWIND_FOUND)
-		target_link_libraries(${TEST_NAME} ${LIBUNWIND_LIBRARIES} ${CMAKE_DL_LIBS})
-	endif()
+	target_link_libraries(${TEST_NAME} cmocka)
 
 	add_dependencies(tests ${TEST_NAME})
 endfunction()
@@ -124,6 +109,8 @@ function(add_testcase name tracer testcase cmake_script)
 			-DTEST_EXECUTABLE=$<TARGET_FILE:${executable}>
 			-DTRACER=${tracer}
 			-DLONG_TESTS=${LONG_TESTS}
+			-DMAX_THREADS=${MAX_THREADS}
+			-DVALGRIND_S_OPTION=${VALGRIND_S_OPTION}
 			-P ${cmake_script})
 
 	set_tests_properties(${name}_${testcase}_${tracer} PROPERTIES
@@ -150,24 +137,19 @@ function(add_test_common name tracer testcase cmake_script)
 	    set(tracer none)
 	endif()
 
-	if (((NOT VALGRIND_FOUND) OR (NOT TESTS_USE_VALGRIND)) AND ${tracer} IN_LIST vg_tracers)
-		# Only print "SKIPPED_*" message when option is enabled
-		if (TESTS_USE_VALGRIND)
+	if (${tracer} IN_LIST vg_tracers)
+		if (NOT VALGRIND_FOUND)
 			skip_test(${name}_${testcase}_${tracer} "SKIPPED_BECAUSE_OF_MISSING_VALGRIND")
+			return()
 		endif()
-		return()
+		if (DEBUG_USE_ASAN OR DEBUG_USE_UBSAN)
+			skip_test(${name}_${testcase}_${tracer} "SKIPPED_BECAUSE_SANITIZER_USED")
+			return()
+		endif()
 	endif()
 
-	if (((NOT VALGRIND_PMEMCHECK_FOUND) OR (NOT TESTS_USE_VALGRIND)) AND ${tracer} STREQUAL "pmemcheck")
-		# Only print "SKIPPED_*" message when option is enabled
-		if (TESTS_USE_VALGRIND)
-			skip_test(${name}_${testcase}_${tracer} "SKIPPED_BECAUSE_OF_MISSING_PMEMCHECK")
-		endif()
-		return()
-	endif()
-
-	if ((USE_ASAN OR USE_UBSAN) AND ${tracer} IN_LIST vg_tracers)
-		skip_test(${name}_${testcase}_${tracer} "SKIPPED_BECAUSE_SANITIZER_USED")
+	if (${tracer} STREQUAL "pmemcheck" AND NOT VALGRIND_PMEMCHECK_FOUND)
+		skip_test(${name}_${testcase}_${tracer} "SKIPPED_BECAUSE_OF_MISSING_PMEMCHECK")
 		return()
 	endif()
 
@@ -228,7 +210,7 @@ function(add_multithreaded)
 		"${multiValueArgs}"
 		${ARGN})
 
-	set(target multithreaded-${MULTITHREADED_NAME}-${MULTITHREADED_BIN})
+	set(target mtt-${MULTITHREADED_NAME}-${MULTITHREADED_BIN})
 
 	prepend(srcs ${CMAKE_CURRENT_SOURCE_DIR} ${srcs})
 	add_executable(${target} ${TEST_MT_COMMON_DIR}/mtt.c
@@ -245,5 +227,5 @@ function(add_multithreaded)
 		target_link_libraries(${target} ${LIBIBVERBS_LIBRARIES})
 	endif()
 
-	add_test_generic(NAME ${target} GROUP_SCRIPT TRACERS none drd helgrind)
+	add_test_generic(NAME ${target} GROUP_SCRIPT TRACERS none memcheck drd helgrind)
 endfunction()

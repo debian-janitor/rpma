@@ -13,6 +13,7 @@
 
 #include "common.h"
 #include "cq.h"
+#include "debug.h"
 #include "log_internal.h"
 
 #ifdef TEST_MOCK_ALLOC
@@ -20,7 +21,8 @@
 #endif
 
 struct rpma_cq {
-	struct ibv_comp_channel *channel; /* completion event channel */
+	struct ibv_comp_channel *channel; /* completion channel */
+	bool shared_comp_channel; /* completion channel is shared */
 	struct ibv_cq *cq; /* completion queue */
 };
 
@@ -39,29 +41,36 @@ rpma_cq_get_ibv_cq(const struct rpma_cq *cq)
 }
 
 /*
- * rpma_cq_new -- create a completion channel and CQ and then
- * encapsulate them in a rpma_cq object
+ * rpma_cq_new -- create a completion channel and CQ and then encapsulate them in a rpma_cq object
  *
  * ASSUMPTIONS
  * - ibv_ctx != NULL && cq_ptr != NULL
  */
 int
-rpma_cq_new(struct ibv_context *ibv_ctx, int cqe, struct rpma_cq **cq_ptr)
+rpma_cq_new(struct ibv_context *ibv_ctx, int cqe, struct ibv_comp_channel *shared_channel,
+		struct rpma_cq **cq_ptr)
 {
+	RPMA_DEBUG_TRACE;
+
+	struct ibv_comp_channel *channel;
 	int ret = 0;
 
-	/* create a completion channel */
-	struct ibv_comp_channel *channel = ibv_create_comp_channel(ibv_ctx);
-	if (channel == NULL) {
-		RPMA_LOG_ERROR_WITH_ERRNO(errno, "ibv_create_comp_channel()");
-		return RPMA_E_PROVIDER;
+	if (shared_channel) {
+		channel = shared_channel;
+	} else {
+		/* create a completion channel */
+		RPMA_FAULT_INJECTION(RPMA_E_PROVIDER, {});
+		channel = ibv_create_comp_channel(ibv_ctx);
+		if (channel == NULL) {
+			RPMA_LOG_ERROR_WITH_ERRNO(errno, "ibv_create_comp_channel()");
+			return RPMA_E_PROVIDER;
+		}
 	}
 
 	/* create a CQ */
-	struct ibv_cq *cq = ibv_create_cq(ibv_ctx, cqe,
-				NULL /* cq_context */,
-				channel /* channel */,
-				0 /* comp_vector */);
+	RPMA_FAULT_INJECTION_GOTO(RPMA_E_PROVIDER, err_destroy_comp_channel);
+	struct ibv_cq *cq = ibv_create_cq(ibv_ctx, cqe, NULL /* cq_context */,
+				channel /* channel */, 0 /* comp_vector */);
 	if (cq == NULL) {
 		RPMA_LOG_ERROR_WITH_ERRNO(errno, "ibv_create_cq()");
 		ret = RPMA_E_PROVIDER;
@@ -69,6 +78,7 @@ rpma_cq_new(struct ibv_context *ibv_ctx, int cqe, struct rpma_cq **cq_ptr)
 	}
 
 	/* request for the next completion on the completion channel */
+	RPMA_FAULT_INJECTION_GOTO(RPMA_E_PROVIDER, err_destroy_cq);
 	errno = ibv_req_notify_cq(cq, 0 /* all completions */);
 	if (errno) {
 		RPMA_LOG_ERROR_WITH_ERRNO(errno, "ibv_req_notify_cq()");
@@ -83,6 +93,7 @@ rpma_cq_new(struct ibv_context *ibv_ctx, int cqe, struct rpma_cq **cq_ptr)
 	}
 
 	(*cq_ptr)->channel = channel;
+	(*cq_ptr)->shared_comp_channel = (shared_channel != NULL);
 	(*cq_ptr)->cq = cq;
 
 	return 0;
@@ -91,14 +102,15 @@ err_destroy_cq:
 	(void) ibv_destroy_cq(cq);
 
 err_destroy_comp_channel:
-	(void) ibv_destroy_comp_channel(channel);
+	if (!shared_channel)
+		(void) ibv_destroy_comp_channel(channel);
 
 	return ret;
 }
 
 /*
- * rpma_cq_delete -- destroy the CQ and the completion channel and then
- * free the encapsulating rpma_cq object
+ * rpma_cq_delete -- destroy the CQ and the completion channel and then free the encapsulating
+ * rpma_cq object
  *
  * ASSUMPTIONS
  * - cq_ptr != NULL
@@ -106,6 +118,8 @@ err_destroy_comp_channel:
 int
 rpma_cq_delete(struct rpma_cq **cq_ptr)
 {
+	RPMA_DEBUG_TRACE;
+
 	struct rpma_cq *cq = *cq_ptr;
 	int ret = 0;
 
@@ -119,27 +133,32 @@ rpma_cq_delete(struct rpma_cq **cq_ptr)
 		ret = RPMA_E_PROVIDER;
 	}
 
-	errno = ibv_destroy_comp_channel(cq->channel);
-	if (!ret && errno) {
-		RPMA_LOG_ERROR_WITH_ERRNO(errno, "ibv_destroy_comp_channel()");
-		ret = RPMA_E_PROVIDER;
+	if (!cq->shared_comp_channel) {
+		errno = ibv_destroy_comp_channel(cq->channel);
+		if (!ret && errno) {
+			RPMA_LOG_ERROR_WITH_ERRNO(errno, "ibv_destroy_comp_channel()");
+			ret = RPMA_E_PROVIDER;
+		}
 	}
 
 	free(cq);
 	*cq_ptr = NULL;
 
+	RPMA_FAULT_INJECTION(RPMA_E_PROVIDER, {});
 	return ret;
 }
 
 /* public librpma API */
 
 /*
- * rpma_cq_get_fd -- get a file descriptor of the completion event channel
- * from the CQ
+ * rpma_cq_get_fd -- get a file descriptor of the completion event channel from the CQ
  */
 int
 rpma_cq_get_fd(const struct rpma_cq *cq, int *fd)
 {
+	RPMA_DEBUG_TRACE;
+	RPMA_FAULT_INJECTION(RPMA_E_INVAL, {});
+
 	if (cq == NULL || fd == NULL)
 		return RPMA_E_INVAL;
 
@@ -149,30 +168,38 @@ rpma_cq_get_fd(const struct rpma_cq *cq, int *fd)
 }
 
 /*
- * rpma_cq_wait -- wait for a completion event from the CQ and ack
- * the completion event
+ * rpma_cq_wait -- wait for a completion event from the CQ and ack the completion event if
+ * the completion channel is not shared.
  */
 int
 rpma_cq_wait(struct rpma_cq *cq)
 {
+	RPMA_DEBUG_TRACE;
+	RPMA_FAULT_INJECTION(RPMA_E_INVAL, {});
+
 	if (cq == NULL)
 		return RPMA_E_INVAL;
+
+	if (cq->shared_comp_channel)
+		return RPMA_E_SHARED_CHANNEL;
 
 	/* wait for the completion event */
 	struct ibv_cq *ev_cq;	/* unused */
 	void *ev_ctx;		/* unused */
+	RPMA_FAULT_INJECTION(RPMA_E_NO_COMPLETION, {});
 	if (ibv_get_cq_event(cq->channel, &ev_cq, &ev_ctx))
 		return RPMA_E_NO_COMPLETION;
 
 	/*
 	 * ACK the collected CQ event.
 	 *
-	 * XXX for performance reasons, it may be beneficial to ACK more than
-	 * one CQ event at the same time.
+	 * XXX for performance reasons, it may be beneficial to ACK more than one CQ event
+	 * at the same time.
 	 */
 	ibv_ack_cq_events(cq->cq, 1 /* # of CQ events */);
 
 	/* request for the next event on the CQ channel */
+	RPMA_FAULT_INJECTION(RPMA_E_PROVIDER, {});
 	errno = ibv_req_notify_cq(cq->cq, 0 /* all completions */);
 	if (errno) {
 		RPMA_LOG_ERROR_WITH_ERRNO(errno, "ibv_req_notify_cq()");
@@ -186,14 +213,18 @@ rpma_cq_wait(struct rpma_cq *cq)
  * rpma_cq_get_wc -- receive one or more completions from the CQ
  */
 int
-rpma_cq_get_wc(struct rpma_cq *cq, int num_entries, struct ibv_wc *wc,
-		int *num_entries_got)
+rpma_cq_get_wc(struct rpma_cq *cq, int num_entries, struct ibv_wc *wc, int *num_entries_got)
 {
+	RPMA_DEBUG_TRACE;
+	RPMA_FAULT_INJECTION(RPMA_E_INVAL, {});
+
 	if (cq == NULL || num_entries < 1 || wc == NULL)
 		return RPMA_E_INVAL;
 
 	if (num_entries > 1 && num_entries_got == NULL)
 		return RPMA_E_INVAL;
+
+	RPMA_FAULT_INJECTION(RPMA_E_PROVIDER, {});
 
 	int result = ibv_poll_cq(cq->cq, num_entries, wc);
 	if (result == 0) {
@@ -208,13 +239,15 @@ rpma_cq_get_wc(struct rpma_cq *cq, int num_entries, struct ibv_wc *wc,
 		return RPMA_E_PROVIDER;
 	} else if (result > num_entries) {
 		RPMA_LOG_ERROR(
-			"ibv_poll_cq() returned %d where <= %d is expected",
-			result, num_entries);
+			"ibv_poll_cq() returned %d where <= %d is expected", result, num_entries);
 		return RPMA_E_UNKNOWN;
 	}
 
 	if (num_entries_got)
 		*num_entries_got = result;
+
+	RPMA_FAULT_INJECTION(RPMA_E_NO_COMPLETION, {});
+	RPMA_FAULT_INJECTION(RPMA_E_UNKNOWN, {});
 
 	return 0;
 }

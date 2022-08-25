@@ -7,9 +7,10 @@
 include(../../cmake/ctest_helpers.cmake)
 
 function(add_test_conn name)
-	set(name conn-${name})
+	set(src_name conn-${name})
+	set(name ut-${src_name})
 	build_test_src(UNIT NAME ${name} SRCS
-		${name}.c
+		${src_name}.c
 		conn-common.c
 		${TEST_UNIT_COMMON_DIR}/mocks-ibverbs.c
 		${TEST_UNIT_COMMON_DIR}/mocks-rdma_cm.c
@@ -36,6 +37,7 @@ add_test_conn(apply_remote_peer_cfg)
 add_test_conn(atomic_write)
 add_test_conn(disconnect)
 add_test_conn(flush)
+add_test_conn(get_compl_fd)
 add_test_conn(get_cq_rcq)
 add_test_conn(get_event_fd)
 add_test_conn(get_qp_num)
@@ -46,5 +48,6 @@ add_test_conn(read)
 add_test_conn(recv)
 add_test_conn(send)
 add_test_conn(send_with_imm)
+add_test_conn(wait)
 add_test_conn(write)
 add_test_conn(write_with_imm)

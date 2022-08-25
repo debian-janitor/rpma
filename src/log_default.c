@@ -1,16 +1,20 @@
 // SPDX-License-Identifier: BSD-3-Clause
-/* Copyright 2020, Intel Corporation */
+/* Copyright 2020-2022, Intel Corporation */
 
 /*
  * log_default.c -- the default logging function with support for logging either
  * to syslog or to stderr
  */
 
+#define _GNU_SOURCE
+#include <unistd.h>
+#include <sys/types.h>
+#include <sys/syscall.h>
+
 #include <stdarg.h>
 #include <syslog.h>
 #include <time.h>
 #include <string.h>
-#include <unistd.h>
 
 #include "log_default.h"
 #include "log_internal.h"
@@ -34,7 +38,7 @@ static const int rpma_log_level_syslog_severity[] = {
 };
 
 /*
- * get_timestamp_prefix -- provide actual time in a readable string
+ * rpma_get_timestamp_prefix -- provide actual time in a readable string
  *
  * NOTE
  * This function is static now, so we know all possible calls of snprintf()
@@ -44,41 +48,43 @@ static const int rpma_log_level_syslog_severity[] = {
  * - buf != NULL && buf_size >= 16
  */
 static void
-get_timestamp_prefix(char *buf, size_t buf_size)
+rpma_get_timestamp_prefix(char *buf, size_t buf_size)
 {
-	struct tm *info;
+	struct tm info;
 	char date[24];
 	struct timespec ts;
 	long usec;
 
 	const char error_message[] = "[time error] ";
 
-	if (clock_gettime(CLOCK_REALTIME, &ts) ||
-	    (NULL == (info = localtime(&ts.tv_sec)))) {
-		memcpy(buf, error_message, sizeof(error_message));
-		return;
-	}
+	if (clock_gettime(CLOCK_REALTIME, &ts))
+		goto err_message;
+
+	if (NULL == localtime_r(&ts.tv_sec, &info))
+		goto err_message;
 
 	usec = ts.tv_nsec / 1000;
-	if (!strftime(date, sizeof(date), "%b %d %H:%M:%S", info)) {
-		memcpy(buf, error_message, sizeof(error_message));
-		return;
-	}
+	if (!strftime(date, sizeof(date), "%b %d %H:%M:%S", &info))
+		goto err_message;
 
 	/* it cannot fail - please see the note above */
 	(void) snprintf(buf, buf_size, "%s.%06ld ", date, usec);
 	if (strnlen(buf, buf_size) == buf_size)
-		memcpy(buf, error_message, sizeof(error_message));
+		goto err_message;
+
+	return;
+
+err_message:
+	memcpy(buf, error_message, sizeof(error_message));
 }
 
 /*
  * rpma_log_default_function -- default logging function used to log a message
  * to syslog and/or stderr
  *
- * The message is started with prefix composed from file, line, func parameters
- * followed by string pointed by format. If format includes format specifiers
- * (subsequences beginning with %), the additional arguments following format
- * are formatted and inserted in the message.
+ * The message is started with prefix composed from file, line, func parameters followed by string
+ * pointed by format. If format includes format specifiers (subsequences beginning with %),
+ * the additional arguments following format are formatted and inserted in the message.
  *
  * ASSUMPTIONS:
  * - level >= RPMA_LOG_LEVEL_FATAL && level <= RPMA_LOG_LEVEL_DEBUG
@@ -86,14 +92,16 @@ get_timestamp_prefix(char *buf, size_t buf_size)
  * - file == NULL || (file != NULL && function != NULL)
  */
 void
-rpma_log_default_function(enum rpma_log_level level, const char *file_name,
-	const int line_no, const char *function_name,
-	const char *message_format, ...)
+rpma_log_default_function(enum rpma_log_level level, const char *file_name, const int line_no,
+	const char *function_name, const char *message_format, ...)
 {
 	char file_info_buffer[256] = "";
 	const char *file_info = file_info_buffer;
 	char message[1024] = "";
 	const char file_info_error[] = "[file info error]: ";
+
+	if (RPMA_LOG_DISABLED == level)
+		return;
 
 	va_list arg;
 	va_start(arg, message_format);
@@ -119,16 +127,23 @@ rpma_log_default_function(enum rpma_log_level level, const char *file_name,
 		}
 	}
 
+	if (level <= Rpma_log_threshold[RPMA_LOG_THRESHOLD_AUX] ||
+	    level == RPMA_LOG_LEVEL_ALWAYS) {
+		char times_tamp[45] = "";
+		rpma_get_timestamp_prefix(times_tamp, sizeof(times_tamp));
+		(void) fprintf(stderr, "%s[%ld] %s%s%s", times_tamp, syscall(SYS_gettid),
+			rpma_log_level_names[(level == RPMA_LOG_LEVEL_ALWAYS) ?
+						RPMA_LOG_LEVEL_DEBUG : level],
+			file_info, message);
+	}
+
+	/* do not log to syslog in case of RPMA_LOG_LEVEL_ALWAYS */
+	if (RPMA_LOG_LEVEL_ALWAYS == level)
+		return;
+
 	/* assumed: level <= Rpma_log_threshold[RPMA_LOG_THRESHOLD] */
 	syslog(rpma_log_level_syslog_severity[level], "%s%s%s",
 		rpma_log_level_names[level], file_info, message);
-
-	if (level <= Rpma_log_threshold[RPMA_LOG_THRESHOLD_AUX]) {
-		char times_tamp[45] = "";
-		get_timestamp_prefix(times_tamp, sizeof(times_tamp));
-		(void) fprintf(stderr, "%s[%d] %s%s%s", times_tamp, getpid(),
-			rpma_log_level_names[level], file_info, message);
-	}
 }
 
 /*

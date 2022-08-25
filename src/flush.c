@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BSD-3-Clause
-/* Copyright 2020-2021, Intel Corporation */
+/* Copyright 2020-2022, Intel Corporation */
 
 /*
  * flush.c -- librpma flush-related implementations
@@ -15,14 +15,14 @@
 #include "cmocka_alloc.h"
 #endif
 
+#include "debug.h"
 #include "flush.h"
 #include "log_internal.h"
 #include "mr.h"
 
-static int rpma_flush_apm_new(struct rpma_peer *peer,
-		struct rpma_flush *flush);
+static int rpma_flush_apm_new(struct rpma_peer *peer, struct rpma_flush *flush);
 static int rpma_flush_apm_delete(struct rpma_flush *flush);
-static int rpma_flush_apm_do(struct ibv_qp *qp, struct rpma_flush *flush,
+static int rpma_flush_apm_execute(struct ibv_qp *qp, struct rpma_flush *flush,
 	struct rpma_mr_remote *dst, size_t dst_offset, size_t len,
 	enum rpma_flush_type type, int flags, const void *op_context);
 
@@ -53,21 +53,23 @@ struct flush_apm {
 static int
 rpma_flush_apm_new(struct rpma_peer *peer, struct rpma_flush *flush)
 {
+	RPMA_DEBUG_TRACE;
+	RPMA_FAULT_INJECTION(RPMA_E_PROVIDER, {});
+
 	int ret;
 
 	/* a memory registration has to be page-aligned */
 	long pagesize = sysconf(_SC_PAGESIZE);
 	if (pagesize < 0) {
-		RPMA_LOG_FATAL("sysconf(_SC_PAGESIZE) failed: %s",
-				strerror(errno));
+		RPMA_LOG_FATAL("sysconf(_SC_PAGESIZE) failed: %s", strerror(errno));
 		return RPMA_E_PROVIDER;
 	}
 
 	size_t mmap_size = (size_t)pagesize;
 
 	/* allocate memory for the read-after-write buffer (RAW) */
-	void *raw = mmap(NULL, mmap_size, PROT_READ | PROT_WRITE,
-			MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+	void *raw = mmap(NULL, mmap_size, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS,
+			-1, 0);
 	if (raw == MAP_FAILED)
 		return RPMA_E_NOMEM;
 
@@ -90,9 +92,8 @@ rpma_flush_apm_new(struct rpma_peer *peer, struct rpma_flush *flush)
 	flush_apm->raw_mr = raw_mr;
 	flush_apm->mmap_size = mmap_size;
 
-	struct rpma_flush_internal *flush_internal =
-			(struct rpma_flush_internal *)flush;
-	flush_internal->flush_func = rpma_flush_apm_do;
+	struct rpma_flush_internal *flush_internal = (struct rpma_flush_internal *)flush;
+	flush_internal->flush_func = rpma_flush_apm_execute;
 	flush_internal->delete_func = rpma_flush_apm_delete;
 	flush_internal->context = flush_apm;
 
@@ -105,10 +106,10 @@ rpma_flush_apm_new(struct rpma_peer *peer, struct rpma_flush *flush)
 static int
 rpma_flush_apm_delete(struct rpma_flush *flush)
 {
-	struct rpma_flush_internal *flush_internal =
-			(struct rpma_flush_internal *)flush;
-	struct flush_apm *flush_apm =
-			(struct flush_apm *)flush_internal->context;
+	RPMA_DEBUG_TRACE;
+
+	struct rpma_flush_internal *flush_internal = (struct rpma_flush_internal *)flush;
+	struct flush_apm *flush_apm = (struct flush_apm *)flush_internal->context;
 
 	int ret_dereg = rpma_mr_dereg(&flush_apm->raw_mr);
 	int ret_unmap = munmap(flush_apm->raw, flush_apm->mmap_size);
@@ -120,24 +121,26 @@ rpma_flush_apm_delete(struct rpma_flush *flush)
 	if (ret_unmap)
 		return RPMA_E_INVAL;
 
+	RPMA_FAULT_INJECTION(RPMA_E_INVAL, {});
 	return 0;
 }
 
 /*
- * rpma_flush_apm_do -- perform the APM-style flush
+ * rpma_flush_apm_execute -- perform the APM-style flush
  */
 static int
-rpma_flush_apm_do(struct ibv_qp *qp, struct rpma_flush *flush,
-	struct rpma_mr_remote *dst, size_t dst_offset, size_t len,
-	enum rpma_flush_type type, int flags, const void *op_context)
+rpma_flush_apm_execute(struct ibv_qp *qp, struct rpma_flush *flush, struct rpma_mr_remote *dst,
+	size_t dst_offset, size_t len, enum rpma_flush_type type, int flags,
+	const void *op_context)
 {
-	struct rpma_flush_internal *flush_internal =
-			(struct rpma_flush_internal *)flush;
-	struct flush_apm *flush_apm =
-			(struct flush_apm *)flush_internal->context;
+	RPMA_DEBUG_TRACE;
+	RPMA_FAULT_INJECTION(RPMA_E_PROVIDER, {});
 
-	return rpma_mr_read(qp, flush_apm->raw_mr, 0, dst, dst_offset,
-			RAW_SIZE, flags, op_context);
+	struct rpma_flush_internal *flush_internal = (struct rpma_flush_internal *)flush;
+	struct flush_apm *flush_apm = (struct flush_apm *)flush_internal->context;
+
+	return rpma_mr_read(qp, flush_apm->raw_mr, 0, dst, dst_offset, RAW_SIZE, flags,
+			op_context);
 }
 
 /* internal librpma API */
@@ -148,6 +151,9 @@ rpma_flush_apm_do(struct ibv_qp *qp, struct rpma_flush *flush,
 int
 rpma_flush_new(struct rpma_peer *peer, struct rpma_flush **flush_ptr)
 {
+	RPMA_DEBUG_TRACE;
+	RPMA_FAULT_INJECTION(RPMA_E_NOMEM, {});
+
 	struct rpma_flush *flush = malloc(sizeof(struct rpma_flush_internal));
 	if (!flush)
 		return RPMA_E_NOMEM;
@@ -169,12 +175,14 @@ rpma_flush_new(struct rpma_peer *peer, struct rpma_flush **flush_ptr)
 int
 rpma_flush_delete(struct rpma_flush **flush_ptr)
 {
-	struct rpma_flush_internal *flush_internal =
-			*(struct rpma_flush_internal **)flush_ptr;
+	RPMA_DEBUG_TRACE;
+
+	struct rpma_flush_internal *flush_internal = *(struct rpma_flush_internal **)flush_ptr;
 
 	int ret = flush_internal->delete_func(*flush_ptr);
 	free(*flush_ptr);
 	*flush_ptr = NULL;
 
+	RPMA_FAULT_INJECTION(RPMA_E_INVAL, {});
 	return ret;
 }
