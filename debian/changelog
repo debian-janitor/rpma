@@ -1,3 +1,9 @@
+rpma (1.1.0-1) unstable; urgency=medium
+
+  * New upstream release.
+
+ -- Adam Borowski <kilobyte@angband.pl>  Thu, 08 Sep 2022 10:24:59 +0200
+
 rpma (1.0.0-1) unstable; urgency=medium
 
   * The "it's perfect now!" upstream release.
