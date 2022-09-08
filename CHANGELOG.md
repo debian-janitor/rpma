@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.0] - 2022-09-08
+### Added
+- (tools) description of the 'schematic' variable (from the report.json file) in the 'tools/perf/BENCHMARKING.md' file
+
+### Fixed
+- removed unnecessary rpma_conn_req_delete() calls from examples
+- (tools) added checking if a path saved in the 'schematic' variable exists
+- common source code of GPSMP examples moved to one folder
+- changed size of the read-after-write (RAW) buffer in the example 04
+- (examples) changed the write size from KILOBYTE to HELLO_STR_SIZE
+
+### Changed
+- unified coding style in the source, the test and the example files
+
 ## [1.0.0] - 2022-08-25
 ### Added
 - DEVELOPMENT.md file containing the most important information needed during development of the library
