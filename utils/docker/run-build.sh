@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # SPDX-License-Identifier: BSD-3-Clause
-# Copyright 2016-2022, Intel Corporation
+# Copyright 2016-2023, Intel Corporation
 #
 
 #
@@ -14,7 +14,6 @@ set -e
 PREFIX=/usr
 CC=${CC:-gcc}
 TEST_DIR=${RPMA_TEST_DIR:-${DEFAULT_TEST_DIR}}
-TESTS_PERF_TOOLS=${TESTS_PERF_TOOLS:-ON}
 EXAMPLE_TEST_DIR="/tmp/rpma_example_build"
 
 # turn off sanitizers only if (CI_SANITS == OFF)
@@ -58,7 +57,7 @@ function upload_codecov() {
 	printf "\n$(tput setaf 1)$(tput setab 7)COVERAGE ${FUNCNAME[0]} START$(tput sgr 0)\n"
 
 	# set proper gcov command
-	clang_used=$(cmake -LA -N . | grep CMAKE_C_COMPILER | grep clang | wc -c)
+	clang_used=$($CMAKE -LA -N . | grep CMAKE_C_COMPILER | grep clang | wc -c)
 	if [[ $clang_used > 0 ]]; then
 		gcovexe="llvm-cov gcov"
 	else
@@ -85,7 +84,7 @@ function compile_example_standalone() {
 	mkdir $EXAMPLE_TEST_DIR
 	cd $EXAMPLE_TEST_DIR
 
-	cmake $1
+	$CMAKE $1
 
 	# exit on error
 	if [[ $? != 0 ]]; then
@@ -128,41 +127,13 @@ function test_compile_all_examples_standalone() {
 	done
 }
 
-function run_pytest() {
-	[ "$TESTS_PERF_TOOLS" != "ON" ] && return
-	# find pytest
-	PYTESTS="pytest pytest3 pytest-3"
-	for bin in $PYTESTS; do
-		which $bin && export PYTEST=$(which $bin) && break
-	done
-
-	if [ "$PYTEST" == "" ]; then
-		echo
-		echo "ERROR: pytest not found"
-		echo
-		exit 1
-	fi
-
-	cd $WORKDIR/tools/perf/
-
-	# The python coverage corrupts the results of the C coverage,
-	# so we have to run them exclusively:
-	if [ "$TESTS_COVERAGE" == "1" ]; then
-		# Run only pytest, because the C coverage
-		# is checked in this build.
-		eval $PYTEST
-	else
-		# add local pip installations to the PATH
-		export PATH=$PATH:~/.local/bin/
-		# run pytest and check the coverage of python tests
-		coverage run -m pytest
-		# '-i' to ignore errors on Arch Linux (caused by a bug)
-		coverage report -i
-	fi
-	cd -
-}
-
 ./prepare-for-build.sh
+
+# Use cmake3 instead of cmake if a version of cmake is v2.x,
+# because the minimum required version of cmake is 3.3.
+CMAKE_VERSION=$(cmake --version | grep version | cut -d" " -f3 | cut -d. -f1)
+[ "$CMAKE_VERSION" != "" ] && [ $CMAKE_VERSION -lt 3 ] && \
+	[ "$(which cmake3 2>/dev/null)" != "" ] && CMAKE=cmake3 || CMAKE=cmake
 
 # look for libprotobuf-c
 USR=$(find /usr -name "*protobuf-c.so*" || true)
@@ -178,16 +149,14 @@ mkdir -p $WORKDIR/build
 cd $WORKDIR/build
 
 CC=$CC \
-cmake .. -DCMAKE_BUILD_TYPE=Debug \
+$CMAKE .. -DCMAKE_BUILD_TYPE=Debug \
 	-DTEST_DIR=$TEST_DIR \
 	-DBUILD_DEVELOPER_MODE=1 \
 	-DDEBUG_USE_ASAN=${CI_SANITS} \
-	-DTESTS_PERF_TOOLS=${TESTS_PERF_TOOLS} \
 	-DDEBUG_USE_UBSAN=${CI_SANITS}
 
 make -j$(nproc)
 ctest --output-on-failure
-run_pytest
 
 cd $WORKDIR
 rm -rf $WORKDIR/build
@@ -201,11 +170,10 @@ mkdir -p $WORKDIR/build
 cd $WORKDIR/build
 
 CC=$CC \
-cmake .. -DCMAKE_BUILD_TYPE=Debug \
+$CMAKE .. -DCMAKE_BUILD_TYPE=Debug \
 	-DTEST_DIR=$TEST_DIR \
 	-DCMAKE_INSTALL_PREFIX=$PREFIX \
 	-DTESTS_COVERAGE=$TESTS_COVERAGE \
-	-DTESTS_PERF_TOOLS=${TESTS_PERF_TOOLS} \
 	-DBUILD_DEVELOPER_MODE=1
 
 make -j$(nproc)
@@ -214,12 +182,6 @@ sudo_password make -j$(nproc) install
 
 if [ "$TESTS_COVERAGE" == "1" ]; then
 	upload_codecov tests
-fi
-
-# Create a PR with generated docs
-if [ "$AUTO_DOC_UPDATE" == "1" ]; then
-	echo "Running auto doc update"
-	../utils/docker/run-doc-update.sh
 fi
 
 test_compile_all_examples_standalone
@@ -240,11 +202,10 @@ mkdir -p $WORKDIR/build
 cd $WORKDIR/build
 
 CC=$CC \
-cmake .. -DCMAKE_BUILD_TYPE=Release \
+$CMAKE .. -DCMAKE_BUILD_TYPE=Release \
 	-DTEST_DIR=$TEST_DIR \
 	-DCMAKE_INSTALL_PREFIX=$PREFIX \
 	-DCPACK_GENERATOR=$PACKAGE_MANAGER \
-	-DTESTS_PERF_TOOLS=${TESTS_PERF_TOOLS} \
 	-DBUILD_DEVELOPER_MODE=1
 
 make -j$(nproc)
@@ -298,6 +259,14 @@ elif [ $PACKAGE_MANAGER = "deb" ]; then
 elif [ $PACKAGE_MANAGER = "rpm" ]; then
 	echo "$ sudo -S rpm --erase librpma-devel"
 	echo $USERPASS | sudo -S rpm --erase librpma-devel
+fi
+
+# Create pull requests with updated documentation or show the git diff only
+if [[ "$AUTO_DOC_UPDATE" == "1" || $AUTO_DOC_UPDATE == "show-diff-only" ]]; then
+	cd $WORKDIR/build
+	echo
+	echo "Running auto doc update (AUTO_DOC_UPDATE=$AUTO_DOC_UPDATE)"
+	../utils/docker/run-doc-update.sh $AUTO_DOC_UPDATE
 fi
 
 cd $WORKDIR

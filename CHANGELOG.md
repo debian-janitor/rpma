@@ -7,6 +7,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.1] - 2023-01-09
+### Added
+- native atomic write support (required support in the kernel and in an RNIC's driver)
+- security warnings to the documentation of the following functions of the API:
+  - rpma_conn_get_private_data()
+  - rpma_conn_req_get_private_data()
+  - rpma_mr_get_descriptor()
+  - rpma_mr_remote_from_descriptor()
+  - rpma_peer_cfg_from_descriptor()
+  - rpma_peer_cfg_get_descriptor()
+- offset of the beginning of the used persistent memory in the clients using PMem in the examples
+- one suppression for Memcheck on Ubuntu 22.04
+- CI Coverity build run once a day over the night
+- a check for the native atomic write support in libibverbs
+- internal APIs:
+  - rpma_utils_ibv_context_is_atomic_write_capable() - checks if kernel supports native atomic write
+- Rocky Linux 8 and 9 builds to the "on_pull_request" workflow
+- show git diff of changed documentation when pull requests with updated documentation are not generated
+
+### Fixed
+- DEVELOPMENT.md file - `CMAKE_BUILD_TYPE` must be set to `Debug` when running the tests
+- build system for CentOS 7 (use cmake3 instead of cmake if a version of cmake is v2.x)
+- check-headers.sh file - corrected the path of check-ms-license.pl and removed
+  unneeded '*' at the start of the grep expressions
+- (examples) use HELLO_STR_SIZE instead of KILOBYTE in case of the hello string
+- the common_pmem_map_file_with_signature_check() function in examples
+- `wr` passed to ibv_post_send(), ibv_post_recv() and ibv_post_srq_recv() is initialized to 0
+- `sge` passed to a log message (in rpma_mr_*() functions) is initialized to 0
+- `rq_size` in rpma_peer_create_srq() initialized to 0
+- detecting no free slot for a new connection request in example 13
+- memory allocations in example 07
+- minor issues detected by Coverity
+- sleep(1) added to mtt_client_connect() before the next connection retry
+
+### Changed
+- the default 'master' branch has been renamed to 'main'
+- logging of the source and the destination GID addresses in rpma_conn_req_new_from_id()
+  has been restricted to only one case when CMAKE_BUILD_TYPE is set to 'Debug'
+- rpma_peer_new() to check the native atomic write support in kernel
+- rpma_peer_setup_qp() to enable native atomic write if both kernel and libibverbs supported it
+- rpma_mr_atomic_write() to use native atomic write if the created QP supported it
+- only the labeled (latest/stable/rolling etc.) versions of docker images (if available) are used in CI - it makes the CI self-updating
+
+### Removed
+- whole benchmarking framework for librpma (the last commit with the benchmarking framework present is marked with the "[benchmarking-framework][bench-frame]" tag)
+- unused doc_snippets
+- meaningless template-example
+- meaningless template unit test
+- Debian 10 from the on_pull_request CI workflow
+
+[bench-frame]: https://github.com/pmem/rpma/tree/benchmarking-framework/tools/perf
+
 ## [1.1.0] - 2022-09-08
 ### Added
 - (tools) description of the 'schematic' variable (from the report.json file) in the 'tools/perf/BENCHMARKING.md' file
@@ -101,7 +153,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - TESTS_USE_VALGRIND
 
 - old integration tests
-- suppresions for get and set functions for cq, rq, sq and timeout has been removed
+- suppressions for get and set functions for cq, rq, sq and timeout has been removed
 
 ## [0.14.0] - 2022-03-15
 ### Added
@@ -202,7 +254,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Tools:
   - [ddio.sh script][ddio] to toggle and query the DDIO (Intel&reg; Data Direct I/O Technology) state per PCIe root port on Intel&reg; Cascade Lake platforms ([#597][597]).
-  - [Benchmarking framework][bench] for librpma.
+  - Benchmarking framework for librpma.
 
 ### Changed
 - Atomic write operation (rpma_write_atomic()) implemented with fence
@@ -223,9 +275,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - rpma_flush_apm_new() fixed, so that rpma_mr_reg() can be called after ibv_fork_init() ([#866][866]).
 
-[bench]: https://github.com/pmem/rpma/blob/master/tools/perf/BENCHMARKING.md
-[ddio]: https://github.com/pmem/rpma/blob/master/tools/ddio.sh
-[distros]: https://github.com/pmem/rpma/blob/master/.github/workflows/nightly.yml
+[ddio]: https://github.com/pmem/rpma/blob/main/tools/ddio.sh
+[distros]: https://github.com/pmem/rpma/blob/main/.github/workflows/nightly.yml
 [nightly]: https://github.com/pmem/rpma/actions/workflows/nightly.yml
 [1220]: https://github.com/pmem/rpma/pull/1220
 [1080]: https://github.com/pmem/rpma/pull/1080

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: BSD-3-Clause
-# Copyright 2020-2022, Intel Corporation
+# Copyright 2020-2023, Intel Corporation
 
 #
 # src2mans -- extract man pages from source files
@@ -87,8 +87,8 @@ do
 			pandoc -s $f.tmp -o $f.tmp1 -f man -t markdown || break
 			# remove the header 
 			tail -n +6 $f.tmp1 > $f.tmp2
-			# fix the name issue '**a **-' -> '**a** -'
-			sed -i '5s/ \*\*-/\*\* -/' $f.tmp2
+			# fix the name issue '**a **-' -> '**a** -' (fix only the line #4)
+			sed -i '4s/ \*\*-/\*\* -/' $f.tmp2
 			# start with a custom header
 			cat $MANS_HEADER | sed "s/MANUAL_NAME_TO_REPLACE/$f/g" > md/$f.md
 			cat $f.tmp2 >> md/$f.md

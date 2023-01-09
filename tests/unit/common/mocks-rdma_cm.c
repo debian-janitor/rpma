@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 /* Copyright 2020-2022, Intel Corporation */
-/* Copyright 2021-2022, Fujitsu */
+/* Copyright (c) 2021-2022, Fujitsu Limited */
 
 /*
  * mocks-rdma_cm.c -- librdmacm mocks
@@ -31,14 +31,12 @@ int Mock_ctrl_defer_destruction = MOCK_CTRL_NO_DEFER;
 const struct rdma_cm_id Cmid_zero = {0};
 
 /*
- * rdma_create_qp -- rdma_create_qp() mock
+ * rdma_create_qp_ex -- rdma_create_qp_ex() mock
  */
 int
-rdma_create_qp(struct rdma_cm_id *id, struct ibv_pd *pd,
-		struct ibv_qp_init_attr *qp_init_attr)
+rdma_create_qp_ex(struct rdma_cm_id *id, struct ibv_qp_init_attr_ex *qp_init_attr)
 {
 	check_expected_ptr(id);
-	check_expected_ptr(pd);
 	assert_non_null(qp_init_attr);
 	check_expected(qp_init_attr->qp_context);
 	check_expected(qp_init_attr->send_cq);
@@ -51,6 +49,12 @@ rdma_create_qp(struct rdma_cm_id *id, struct ibv_pd *pd,
 	check_expected(qp_init_attr->cap.max_inline_data);
 	assert_int_equal(qp_init_attr->qp_type, IBV_QPT_RC);
 	assert_int_equal(qp_init_attr->sq_sig_all, 0);
+	check_expected(qp_init_attr->comp_mask);
+#ifdef IBV_WR_ATOMIC_WRITE_SUPPORTED
+	if (qp_init_attr->comp_mask & IBV_QP_INIT_ATTR_SEND_OPS_FLAGS)
+		check_expected(qp_init_attr->send_ops_flags);
+#endif
+	check_expected(qp_init_attr->pd);
 
 	errno = mock_type(int);
 	if (errno)

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # SPDX-License-Identifier: BSD-3-Clause
-# Copyright 2017-2022, Intel Corporation
+# Copyright 2017-2023, Intel Corporation
 #
 
 #
@@ -22,23 +22,12 @@ set -e
 source $(dirname $0)/set-ci-vars.sh
 
 if [[ -z "$OS" || -z "$OS_VER" ]]; then
-	echo "ERROR: The variables OS and OS_VER have to be set " \
-		"(eg. OS=fedora, OS_VER=30)."
+	echo "ERROR: The variables OS and OS_VER have to be set (eg. OS=fedora, OS_VER=30)."
 	exit 1
 fi
 
 if [[ -z "$HOST_WORKDIR" ]]; then
 	HOST_WORKDIR=$(readlink -f ../..)
-fi
-
-if [[ "$TYPE" == "coverity" && "$CI_EVENT_TYPE" != "cron" && "$CI_BRANCH" != "coverity_scan" ]]; then
-	echo "Skipping Coverity job for non cron/Coverity build"
-	exit 0
-fi
-
-if [[ "$CI_BRANCH" == "coverity_scan" && "$TYPE" != "coverity" ]]; then
-	echo "Skipping non-Coverity job for cron/Coverity build"
-	exit 0
 fi
 
 imageName=${DOCKER_REPO}:${IMG_VER}-${OS}-${OS_VER}
@@ -61,9 +50,12 @@ fi
 
 if [ -n "$DNS_SERVER" ]; then DNS_SETTING=" --dns=$DNS_SERVER "; fi
 
-# Run doc update only on $GITHUB_REPO and only on the master branch
-if [[ "${CI_BRANCH}" != "master" || "$CI_EVENT_TYPE" == "pull_request" || "$CI_REPO_SLUG" != "${GITHUB_REPO}" ]]; then
-	AUTO_DOC_UPDATE=0
+if [ "$AUTO_DOC_UPDATE" == "1" ]; then
+	# Create pull requests only on $GITHUB_REPO and only on the main branch,
+	# otherwise show the git diff only.
+	if [[ "$CI_BRANCH" != "main" || "$CI_EVENT_TYPE" == "pull_request" || "$CI_REPO_SLUG" != "$GITHUB_REPO" ]]; then
+		AUTO_DOC_UPDATE="show-diff-only"
+	fi
 fi
 
 WORKDIR=/rpma
@@ -111,7 +103,6 @@ docker run --privileged=true --name=$containerName -i $TTY \
 	--env TEST_BUILD=$TEST_BUILD \
 	--env DEFAULT_TEST_DIR=/dev/shm \
 	--env TEST_PACKAGES=${TEST_PACKAGES:-ON} \
-	--env TESTS_PERF_TOOLS=${TESTS_PERF_TOOLS:-ON} \
 	--env FAULT_INJECTION=$FAULT_INJECTION \
 	--env CC=${CC:-gcc} \
 	--shm-size=4G \

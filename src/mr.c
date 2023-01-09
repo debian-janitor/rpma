@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 /* Copyright 2020-2022, Intel Corporation */
-/* Copyright 2021-2022, Fujitsu */
+/* Copyright (c) 2021-2022, Fujitsu Limited */
 
 /*
  * mr.c -- librpma memory region-related implementations
@@ -69,8 +69,8 @@ rpma_mr_read(struct ibv_qp *qp,
 {
 	RPMA_DEBUG_TRACE;
 
-	struct ibv_send_wr wr;
-	struct ibv_sge sge;
+	struct ibv_send_wr wr = {0};
+	struct ibv_sge sge = {0};
 
 	if (src == NULL) {
 		/* source */
@@ -126,8 +126,8 @@ rpma_mr_write(struct ibv_qp *qp,
 {
 	RPMA_DEBUG_TRACE;
 
-	struct ibv_send_wr wr;
-	struct ibv_sge sge;
+	struct ibv_send_wr wr = {0};
+	struct ibv_sge sge = {0};
 
 	if (src == NULL) {
 		/* source */
@@ -197,8 +197,26 @@ rpma_mr_atomic_write(struct ibv_qp *qp, struct rpma_mr_remote *dst, size_t dst_o
 {
 	RPMA_DEBUG_TRACE;
 
-	struct ibv_send_wr wr;
-	struct ibv_sge sge;
+#ifdef IBV_WR_ATOMIC_WRITE_SUPPORTED
+	struct ibv_qp_ex *qpx = ibv_qp_to_qp_ex(qp);
+	/* check if the created QP supports native atomic write */
+	if (qpx && qpx->wr_atomic_write) {
+		ibv_wr_start(qpx);
+		qpx->wr_id = (uint64_t)op_context;
+		qpx->wr_flags = (flags & RPMA_F_COMPLETION_ON_SUCCESS) ? IBV_SEND_SIGNALED : 0;
+		RPMA_FAULT_INJECTION(RPMA_E_PROVIDER, {});
+		ibv_wr_atomic_write(qpx, dst->rkey, dst->raddr + dst_offset, src);
+		int ret = ibv_wr_complete(qpx);
+		if (ret) {
+			RPMA_LOG_ERROR_WITH_ERRNO(ret, "ibv_wr_complete()");
+			return RPMA_E_PROVIDER;
+		}
+
+		return 0;
+	}
+#endif
+	struct ibv_send_wr wr = {0};
+	struct ibv_sge sge = {0};
 
 	/* source */
 	sge.addr = (uint64_t)((uintptr_t)src);
@@ -246,7 +264,7 @@ rpma_mr_send(struct ibv_qp *qp, const struct rpma_mr_local *src, size_t offset, 
 {
 	RPMA_DEBUG_TRACE;
 
-	struct ibv_send_wr wr;
+	struct ibv_send_wr wr = {0};
 	struct ibv_sge sge;
 
 	/* source */
@@ -303,7 +321,7 @@ rpma_mr_recv(struct ibv_qp *qp, struct rpma_mr_local *dst, size_t offset, size_t
 {
 	RPMA_DEBUG_TRACE;
 
-	struct ibv_recv_wr wr;
+	struct ibv_recv_wr wr = {0};
 	struct ibv_sge sge;
 
 	/* source */
@@ -342,7 +360,7 @@ rpma_mr_srq_recv(struct ibv_srq *ibv_srq, struct rpma_mr_local *dst, size_t offs
 {
 	RPMA_DEBUG_TRACE;
 
-	struct ibv_recv_wr wr;
+	struct ibv_recv_wr wr = {0};
 	struct ibv_sge sge;
 
 	/* source */
@@ -522,8 +540,8 @@ rpma_mr_remote_from_descriptor(const void *desc, size_t desc_size, struct rpma_m
 	mr->usage = usage;
 	*mr_ptr = mr;
 
-	RPMA_LOG_INFO("new rpma_mr_remote(raddr=0x%" PRIx64 ", size=%" PRIu64
-			", rkey=0x%" PRIx32 ", usage=0x%" PRIx8 ")",
+	RPMA_LOG_DEBUG("new struct rpma_mr_remote {raddr=0x%" PRIx64 ", size=%" PRIu64
+			", rkey=0x%" PRIx32 ", usage=0x%" PRIx8 "}",
 			raddr, size, rkey, usage);
 
 	return 0;

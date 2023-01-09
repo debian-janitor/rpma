@@ -1,15 +1,23 @@
 #!/usr/bin/env bash
 #
 # SPDX-License-Identifier: BSD-3-Clause
-# Copyright 2018-2022, Intel Corporation
+# Copyright 2018-2023, Intel Corporation
+#
+
+#
+# run-doc-update.sh - create pull requests with updated documentation
+#
+# USAGE: run-doc-update.sh [show-diff-only]
+#        show-diff-only - do not create pull requests, show only the diff instead
 #
 
 set -e
 
+ARG1=$1
 WORKDIR=$(pwd)
 USER_NAME="pmem"
 BOT_NAME="pmem-bot"
-VERSION="master"
+VERSION="main"
 SOURCE_BRANCH=${CI_BRANCH}
 
 function set_up_repo() {
@@ -19,7 +27,7 @@ function set_up_repo() {
 	local BRANCH=$4
 
 	cd ${WORKDIR}
-	git clone ${ORIGIN}
+	git clone ${ORIGIN} ${REPO_NAME}
 	cd ${REPO_NAME}
 	git remote add upstream ${UPSTREAM}
 
@@ -27,6 +35,8 @@ function set_up_repo() {
 	git config --local user.email "${BOT_NAME}@intel.com"
 
 	git remote update
+
+	[ "$ARG1" == "show-diff-only" ] && return 0
 
 	# check if "upstream/${BRANCH}" is a valid branch
 	if ! git log -1 upstream/${BRANCH} 2>/dev/null; then
@@ -70,13 +80,15 @@ ORIGIN_RPMA="https://${DOC_UPDATE_GITHUB_TOKEN}@github.com/${BOT_NAME}/rpma"
 UPSTREAM_RPMA="https://github.com/${USER_NAME}/rpma"
 TARGET_BRANCH="man-pages"
 
+[ "$ARG1" == "show-diff-only" ] && ORIGIN_RPMA=".."
+
 # set up the rpma repo
 set_up_repo ${ORIGIN_RPMA} ${UPSTREAM_RPMA} rpma ${SOURCE_BRANCH}
 
 # build docs
 mkdir ${WORKDIR}/rpma/build
 cd ${WORKDIR}/rpma/build
-cmake -DBUILD_TESTS=OFF -DBUILD_EXAMPLES=OFF ..
+cmake -DBUILD_DOC=ON -DBUILD_TESTS=OFF -DBUILD_EXAMPLES=OFF ..
 make -j$(nproc) doc
 # copy Markdown files outside the repo
 cp -R doc/md ${WORKDIR}
@@ -93,6 +105,20 @@ rm -r ${DOCS_DIR}
 mkdir ${DOCS_DIR}
 # copy new man pages
 cp -r ${WORKDIR}/md/*.md ${DOCS_DIR}
+
+if [ "$ARG1" == "show-diff-only" ]; then
+	echo
+	echo "########################################"
+	if [ $(git diff | wc -l) -gt 0 ]; then
+		echo "git diff of the generated documentation:"
+		git diff
+	else
+		echo "No changes in the documentation."
+	fi
+	echo "########################################"
+	echo
+	exit 0
+fi
 
 # add, commit and push changes to the rpma repo
 commit_and_push_changes ${ORIGIN_RPMA} ${BRANCH_PR} ${TARGET_BRANCH} "doc: automatic update of man pages"

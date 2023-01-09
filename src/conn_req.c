@@ -43,6 +43,7 @@ struct rpma_conn_req {
 	struct rpma_peer *peer;
 };
 
+#ifdef DEBUG
 /*
  * rpma_snprintf_gid -- snprintf GID address to the given string (helper function)
  */
@@ -64,6 +65,7 @@ rpma_snprintf_gid(uint8_t *raw, char *gid, size_t size)
 
 	return 0;
 }
+#endif /* DEBUG */
 
 /*
  * rpma_conn_req_new_from_id -- allocate a new conn_req object from CM ID and equip the latter
@@ -136,6 +138,7 @@ rpma_conn_req_new_from_id(struct rpma_peer *peer, struct rdma_cm_id *id,
 		goto err_destroy_qp;
 	}
 
+#ifdef DEBUG
 /*
  * Maximum length of GID address in the following format:
  * 0000:0000:0000:0000:0000:ffff:c0a8:6604
@@ -160,6 +163,7 @@ rpma_conn_req_new_from_id(struct rpma_peer *peer, struct rdma_cm_id *id,
 		}
 	}
 #undef GID_STR_LEN
+#endif /* DEBUG */
 
 	(*req_ptr)->is_passive = 0;
 	(*req_ptr)->id = id;
@@ -501,14 +505,14 @@ rpma_conn_req_delete(struct rpma_conn_req **req_ptr)
 	int ret = rpma_cq_delete(&req->rcq);
 
 	int ret2 = rpma_cq_delete(&req->cq);
-	if (!ret && ret2)
+	if (!ret)
 		ret = ret2;
 
 	if (req->is_passive)
 		ret2 = rpma_conn_req_reject(req);
 	else
 		ret2 = rpma_conn_req_destroy(req);
-	if (!ret && ret2)
+	if (!ret)
 		ret = ret2;
 
 	if (req->channel) {

@@ -24,11 +24,14 @@
 # environment variable is set to ON, then the integration tests will stop on the first failure.
 #
 # The '--integration-tests' option starts integration tests documented
-# in the https://github.com/pmem/rpma/blob/master/DEVELOPMENT.md#running-integration-tests file.
+# in the https://github.com/pmem/rpma/blob/main/DEVELOPMENT.md#running-integration-tests file.
 #
 
 # value used to get the maximum reachable value of fault injection for each example
 GET_FI_MAX=999999
+
+# offset where the clients use a PMem from
+PMEM_CLIENT_OFFSET=1024
 
 USAGE_STRING="\
 Usage:\n\
@@ -46,7 +49,7 @@ If the '--stop-on-failure' argument is used or the 'RPMA_EXAMPLES_STOP_ON_FAILUR
 environment variable is set to ON, then the integration tests will stop on the first failure.\n
 \n\
 The '--integration-tests' option starts integration tests documented \
-in the https://github.com/pmem/rpma/blob/master/DEVELOPMENT.md#running-integration-tests file.\n"
+in the https://github.com/pmem/rpma/blob/main/DEVELOPMENT.md#running-integration-tests file.\n"
 
 BIN_DIR=$1
 if [ "$BIN_DIR" == "" -o ! -d "$BIN_DIR" ]; then
@@ -320,7 +323,11 @@ function run_example() {
 		done
 		;;
 	*)
-		start_client $VLD_CCMD $DIR/client $IP_ADDRESS $PORT $PMEM_PATH
+		if [ "$PMEM_PATH" != "" ]; then
+			start_client $VLD_CCMD $DIR/client $IP_ADDRESS $PORT $PMEM_PATH $PMEM_CLIENT_OFFSET
+		else
+			start_client $VLD_CCMD $DIR/client $IP_ADDRESS $PORT
+		fi
 		;;
 	esac
 

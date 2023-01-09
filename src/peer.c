@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 /* Copyright 2020-2022, Intel Corporation */
-/* Copyright 2021-2022, Fujitsu */
+/* Copyright (c) 2021-2022, Fujitsu Limited */
 
 /*
  * peer.c -- librpma peer-related implementations
@@ -16,6 +16,7 @@
 #include "peer.h"
 #include "srq.h"
 #include "srq_cfg.h"
+#include "utils.h"
 
 #ifdef TEST_MOCK_ALLOC
 #include "cmocka_alloc.h"
@@ -31,6 +32,8 @@ struct rpma_peer {
 	struct ibv_pd *pd; /* a protection domain */
 
 	int is_odp_supported; /* is On-Demand Paging supported */
+
+	int is_native_atomic_write_supported; /* is native atomic write supported */
 };
 
 /* internal librpma API */
@@ -96,8 +99,9 @@ rpma_peer_create_srq(struct rpma_peer *peer, struct rpma_srq_cfg *cfg,
 {
 	RPMA_DEBUG_TRACE;
 
+	uint32_t rq_size = 0;
+
 	/* read size of the shared RQ from the configuration */
-	uint32_t rq_size;
 	(void) rpma_srq_cfg_get_rq_size(cfg, &rq_size);
 
 	struct ibv_srq_init_attr srq_init_attr;
@@ -164,7 +168,7 @@ rpma_peer_setup_qp(struct rpma_peer *peer, struct rdma_cm_id *id, struct rpma_cq
 
 	struct ibv_cq *ibv_cq = rpma_cq_get_ibv_cq(cq);
 
-	struct ibv_qp_init_attr qp_init_attr;
+	struct ibv_qp_init_attr_ex qp_init_attr;
 	qp_init_attr.qp_context = NULL;
 	qp_init_attr.send_cq = ibv_cq;
 	qp_init_attr.recv_cq = rcq ? rpma_cq_get_ibv_cq(rcq) : ibv_cq;
@@ -185,14 +189,24 @@ rpma_peer_setup_qp(struct rpma_peer *peer, struct rdma_cm_id *id, struct rpma_cq
 	 */
 	qp_init_attr.sq_sig_all = 0;
 
+	qp_init_attr.comp_mask = IBV_QP_INIT_ATTR_PD;
+
+#ifdef IBV_WR_ATOMIC_WRITE_SUPPORTED
+	if (peer->is_native_atomic_write_supported) {
+		qp_init_attr.comp_mask |= IBV_QP_INIT_ATTR_SEND_OPS_FLAGS;
+		qp_init_attr.send_ops_flags = IBV_QP_EX_WITH_ATOMIC_WRITE;
+	}
+#endif
+	qp_init_attr.pd = peer->pd;
+
 	/*
 	 * The actual capabilities and properties of the created QP are returned through
 	 * qp_init_attr.
 	 */
 	RPMA_FAULT_INJECTION(RPMA_E_PROVIDER, {});
-	if (rdma_create_qp(id, peer->pd, &qp_init_attr)) {
+	if (rdma_create_qp_ex(id, &qp_init_attr)) {
 		RPMA_LOG_ERROR_WITH_ERRNO(errno,
-			"rdma_create_qp(max_send_wr=%" PRIu32
+			"rdma_create_qp_ex(max_send_wr=%" PRIu32
 			", max_recv_wr=%" PRIu32
 			", max_send/recv_sge=%i, max_inline_data=%i, qp_type=IBV_QPT_RC, sq_sig_all=0)",
 			sq_size, rq_size, RPMA_MAX_SGE,
@@ -283,10 +297,20 @@ rpma_peer_new(struct ibv_context *ibv_ctx, struct rpma_peer **peer_ptr)
 	RPMA_FAULT_INJECTION(RPMA_E_INVAL, {});
 
 	int is_odp_supported = 0;
+	int is_native_atomic_write_supported = 0;
 	int ret;
 
 	if (ibv_ctx == NULL || peer_ptr == NULL)
 		return RPMA_E_INVAL;
+
+	ret = rpma_utils_ibv_context_is_atomic_write_capable(ibv_ctx,
+			&is_native_atomic_write_supported);
+	if (ret)
+		return ret;
+
+	if (!is_native_atomic_write_supported)
+		RPMA_LOG_INFO(
+			"Native atomic write is not supported - ordinary RDMA write will be used instead.");
 
 	ret = rpma_utils_ibv_context_is_odp_capable(ibv_ctx, &is_odp_supported);
 	if (ret)
@@ -327,6 +351,7 @@ rpma_peer_new(struct ibv_context *ibv_ctx, struct rpma_peer **peer_ptr)
 
 	peer->pd = pd;
 	peer->is_odp_supported = is_odp_supported;
+	peer->is_native_atomic_write_supported = is_native_atomic_write_supported;
 	*peer_ptr = peer;
 
 	return 0;

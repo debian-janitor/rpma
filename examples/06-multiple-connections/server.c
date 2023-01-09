@@ -321,7 +321,7 @@ client_handle_connection_event(struct custom_event *ce)
 	struct client_res *clnt = (struct client_res *)ce->arg;
 
 	/* get next connection's event */
-	enum rpma_conn_event event;
+	enum rpma_conn_event event = RPMA_CONN_UNDEFINED;
 	int ret = rpma_conn_next_event(clnt->conn, &event);
 	if (ret) {
 		if (ret == RPMA_E_NO_EVENT)
@@ -444,7 +444,7 @@ main(int argc, char *argv[])
 	(void) printf("Today I have got in touch with:\n");
 
 	/* process epoll's events */
-	struct epoll_event event;
+	struct epoll_event event = {0};
 	struct custom_event *ce;
 	while ((ret = epoll_wait(svr.epoll, &event, 1 /* # of events */, TIMEOUT_15S)) == 1) {
 		ce = (struct custom_event *)event.data.ptr;
@@ -466,19 +466,19 @@ main(int argc, char *argv[])
 err_ep_shutdown:
 	/* shutdown the endpoint */
 	ret2 = rpma_ep_shutdown(&svr.ep);
-	if (!ret && ret2)
+	if (!ret)
 		ret = ret2;
 
 err_server_fini:
 	/* release the server's resources */
 	ret2 = server_fini(&svr);
-	if (!ret && ret2)
+	if (!ret)
 		ret = ret2;
 
 err_peer_delete:
 	/* delete the peer object */
 	ret2 = rpma_peer_delete(&peer);
-	if (!ret && ret2)
+	if (!ret)
 		ret = ret2;
 
 	return ret;

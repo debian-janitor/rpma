@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright 2016-2022, Intel Corporation
+# Copyright (c) 2022 Fujitsu Limited
 
 # check-headers.sh - check copyright and license in source files
 
 SELF=$0
-DIR=$(dirname $SELF)
 
 function usage() {
 	echo "Usage: $SELF <source_root_path> <license_tag> [-h|-v|-a]"
@@ -70,7 +70,7 @@ done
 
 if [ $CHECK_ALL -eq 0 ]; then
 	CURRENT_COMMIT=$($GIT log --pretty=%H -1)
-	MERGE_BASE=$($GIT merge-base HEAD origin/master 2>/dev/null)
+	MERGE_BASE=$($GIT merge-base HEAD origin/main 2>/dev/null)
 	[ -z $MERGE_BASE ] && \
 		MERGE_BASE=$($GIT log --pretty="%cN:%H" | grep GitHub | head -n1 | cut -d: -f2)
 	[ -z "$MERGE_BASE" -o "$CURRENT_COMMIT" == "$MERGE_BASE" ] && \
@@ -94,10 +94,10 @@ else
 fi
 
 FILES=$($GIT $GIT_COMMAND | ${SOURCE_ROOT}/utils/check_license/file-exceptions.sh | \
-	grep    -E -e '*\.[chs]$' -e '*\.[ch]pp$' -e '*\.sh$' \
-		   -e '*\.py$' -e '*\.link$' -e 'Makefile*' -e 'TEST*' \
+	grep    -E -e '\.[chs]$' -e '\.[ch]pp$' -e '\.sh$' \
+		   -e '\.py$' -e '\.link$' -e 'Makefile*' -e 'TEST*' \
 		   -e '/common.inc$' -e '/match$' -e '/check_whitespace$' \
-		   -e 'LICENSE$' -e 'CMakeLists.txt$' -e '*\.cmake$' -e '/Dockerfile.*' | \
+		   -e 'LICENSE$' -e 'CMakeLists.txt$' -e '\.cmake$' -e '/Dockerfile.*' | \
 	xargs)
 
 RV=0
@@ -114,12 +114,12 @@ for file in $FILES ; do
 		echo "error: no $LICENSE SPDX tag in file: $src_path" >&2
 		RV=1
 	elif [[ $file == *.c ]]; then
-		if ! grep -q -e "\/\/ SPDX-License-Identifier: $LICENSE" $src_path; then
+		if ! grep -q -e "// SPDX-License-Identifier: $LICENSE" $src_path; then
 			echo "error: wrong format of SPDX tag in the file: $src_path" >&2
 			RV=1
 		fi
 	elif [[ $file == *.h ]]; then
-		if ! grep -q -e "\/\* SPDX-License-Identifier: $LICENSE \*\/" $src_path; then
+		if ! grep -q -e "/\* SPDX-License-Identifier: $LICENSE \*/" $src_path; then
 			echo "error: wrong format of SPDX tag in the file: $src_path" >&2
 			RV=1
 		fi
@@ -188,7 +188,7 @@ s/.*Copyright \([0-9]\+\),.*/\1-\1/' $src_path`
 done
 rm -f $TMP $TMP2 $TEMPFILE
 
-$DIR/check-ms-license.pl $FILES
+${SOURCE_ROOT}/utils/check_license/check-ms-license.pl $FILES
 
 # check if error found
 if [ $RV -eq 0 ]; then
