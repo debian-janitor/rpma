@@ -1,3 +1,10 @@
+rpma (1.2.0-1) unstable; urgency=medium
+
+  * New upstream release.
+  * Change architecture to "any".
+
+ -- Adam Borowski <kilobyte@angband.pl>  Tue, 10 Jan 2023 12:08:29 +0100
+
 rpma (1.1.1-1) unstable; urgency=medium
 
   * New upstream release.
